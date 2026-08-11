@@ -22,6 +22,26 @@
   --radius-sm: 14px;
 }
 
+body[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f7f3;
+  --bg-soft: #eef4ef;
+  --panel: rgba(255, 255, 255, 0.86);
+  --panel-strong: rgba(255, 255, 255, 0.95);
+  --line: rgba(12, 30, 18, 0.12);
+  --line-strong: rgba(18, 110, 58, 0.22);
+  --text: #0f1a14;
+  --muted: #506256;
+  --muted-strong: #274130;
+  --accent: #0f8f4e;
+  --accent-2: #c87412;
+  --accent-deep: #0b6d3d;
+  --good: #0d8b49;
+  --bad: #c24136;
+  --warn: #9b6a08;
+  --shadow: 0 20px 48px rgba(11, 35, 20, 0.12);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -43,6 +63,14 @@ body {
   overflow-x: hidden;
 }
 
+body[data-theme='light'] {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(15, 143, 78, 0.14), transparent 26%),
+    radial-gradient(circle at 86% 12%, rgba(200, 116, 18, 0.12), transparent 24%),
+    radial-gradient(circle at 82% 72%, rgba(15, 143, 78, 0.09), transparent 22%),
+    linear-gradient(180deg, #f8faf7 0%, #eef4ef 60%, #e9f0ea 100%);
+}
+
 body::before {
   content: "";
   position: fixed;
@@ -56,6 +84,13 @@ body::before {
   opacity: 0.22;
 }
 
+body[data-theme='light']::before {
+  background-image:
+    linear-gradient(rgba(16, 34, 22, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 34, 22, 0.045) 1px, transparent 1px);
+  opacity: 0.25;
+}
+
 button,
 input,
 textarea {
@@ -66,6 +101,11 @@ button {
   cursor: pointer;
 }
 
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 code,
 pre {
   font-family: "Cascadia Mono", "Consolas", monospace;
@@ -74,6 +114,24 @@ pre {
 .page-shell {
   width: min(1500px, calc(100vw - 28px));
   margin: 14px auto 24px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 18px;
+  top: -40px;
+  z-index: 20;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  text-decoration: none;
+  transition: top 120ms ease;
+}
+
+.skip-link:focus {
+  top: 12px;
 }
 
 .hero {
@@ -145,6 +203,15 @@ pre {
   display: grid;
   gap: 8px;
   padding: 10px;
+}
+
+.theme-toggle {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-strong);
+  padding: 8px 12px;
 }
 
 .nav-link {
@@ -244,6 +311,10 @@ pre {
   display: grid;
   grid-template-columns: 1.2fr 0.95fr;
   gap: 18px;
+}
+
+.analytics-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .hero-copy,
@@ -347,6 +418,11 @@ pre {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
   color: var(--muted-strong);
+}
+
+.pill-link {
+  text-decoration: none;
+  color: var(--text);
 }
 
 .pill-glow {
@@ -496,6 +572,10 @@ pre {
   margin-top: 16px;
 }
 
+.stacked-info.chain-links {
+  align-items: stretch;
+}
+
 .bounty-meta .pill,
 .stacked-info > div,
 .result-summary > div {
@@ -512,6 +592,85 @@ pre {
 .history-box {
   display: grid;
   gap: 10px;
+}
+
+.skeleton-card-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.skeleton-panel {
+  min-height: 90px;
+}
+
+.skeleton-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0%, rgba(124, 247, 165, 0.16) 50%, rgba(255, 255, 255, 0.03) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: 999px;
+}
+
+body[data-theme='light'] .skeleton {
+  background: linear-gradient(90deg, rgba(15, 25, 19, 0.04) 0%, rgba(15, 143, 78, 0.16) 50%, rgba(15, 25, 19, 0.04) 100%);
+  background-size: 200% 100%;
+}
+
+.skeleton-line {
+  height: 14px;
+}
+
+.skeleton-label {
+  width: 52%;
+}
+
+.skeleton-value {
+  width: 72%;
+  height: 28px;
+  margin-top: 14px;
+}
+
+.skeleton-title {
+  width: 38%;
+  height: 16px;
+}
+
+.skeleton-heading {
+  width: 78%;
+  height: 44px;
+  margin-top: 14px;
+  border-radius: 18px;
+}
+
+.skeleton-text {
+  width: 100%;
+  height: 14px;
+  margin-top: 12px;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.skeleton-pill {
+  display: inline-block;
+  width: 120px;
+  height: 34px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .feed-item {
@@ -859,6 +1018,44 @@ pre {
 
 .muted {
   color: var(--muted);
+}
+
+.auth-chip {
+  margin-top: 20px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(160, 255, 185, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  display: grid;
+  gap: 6px;
+}
+
+.inline-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.record-card.selected {
+  border-color: rgba(113, 214, 138, 0.5);
+  box-shadow: 0 0 0 1px rgba(113, 214, 138, 0.16) inset;
+}
+
+.field-grid .field.full {
+  grid-column: 1 / -1;
+}
+
+.detail-stack .panel-dark + .panel-dark {
+  margin-top: 18px;
+}
+
+.section-head.compact h2,
+.section-head.compact h3 {
+  margin-bottom: 6px;
+}
+
+.auth-chip .muted {
+  color: rgba(217, 226, 236, 0.65);
 }
 
 @media (max-width: 1220px) {

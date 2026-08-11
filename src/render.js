@@ -3,9 +3,38 @@ import { requirementTypes } from './requirements.js';
 const supportedRequirementTypes = Object.keys(requirementTypes);
 
 export function renderApp(state, uiState) {
+  if (state?.loading) {
+    renderStatsSkeleton();
+    renderLoadingShell(uiState);
+    syncNavigationState(uiState.view);
+    return;
+  }
   renderStats(state.stats || []);
   renderShell(state, uiState);
   syncNavigationState(uiState.view);
+}
+
+function renderStatsSkeleton() {
+  const root = document.getElementById('stats');
+  root.innerHTML = `
+    <div class="stats-grid">
+      ${Array.from({ length: 4 })
+        .map(
+          () => `
+            <article class="stat-card skeleton-card" aria-hidden="true">
+              <div class="skeleton skeleton-line skeleton-label"></div>
+              <div class="skeleton skeleton-line skeleton-value"></div>
+            </article>
+          `
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function renderLoadingShell(uiState) {
+  const root = document.getElementById('view-root');
+  root.innerHTML = renderLoadingView(uiState);
 }
 
 function renderStats(stats) {
@@ -41,12 +70,52 @@ function renderShell(state, uiState) {
     root.innerHTML = renderResultView(state, summary, latestVerification);
   } else if (uiState.view === 'mine') {
     root.innerHTML = renderMineView(state, uiState);
+  } else if (uiState.view === 'account') {
+    root.innerHTML = renderAccountView(state, uiState);
+  } else if (uiState.view === 'admin') {
+    root.innerHTML = renderAdminView(state, uiState);
   } else {
     root.innerHTML = renderDashboardView(state, uiState, bountyList, summary);
   }
 }
 
+function renderLoadingView(uiState) {
+  const blocks = Array.from({ length: 6 })
+    .map(
+      () => `
+        <article class="panel-dark skeleton-panel" aria-hidden="true">
+          <div class="skeleton skeleton-line skeleton-title"></div>
+          <div class="skeleton skeleton-line skeleton-text"></div>
+          <div class="skeleton skeleton-line skeleton-text"></div>
+        </article>
+      `
+    )
+    .join('');
+
+  return `
+    <section class="hero-grid">
+      <div class="hero-copy panel-dark">
+        <div class="skeleton skeleton-line skeleton-title"></div>
+        <div class="skeleton skeleton-line skeleton-heading"></div>
+        <div class="skeleton skeleton-line skeleton-text"></div>
+        <div class="skeleton-row">
+          <span class="skeleton skeleton-pill"></span>
+          <span class="skeleton skeleton-pill"></span>
+          <span class="skeleton skeleton-pill"></span>
+        </div>
+      </div>
+      <div class="hero-panel panel-dark">
+        <div class="skeleton-card-grid">
+          ${blocks}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderDashboardView(state, uiState, bountyList, summary) {
+  const auth = state.auth || {};
+  const analytics = state.analytics || {};
   return `
     <section class="hero-grid">
       <div class="hero-copy panel-dark">
@@ -64,6 +133,11 @@ function renderDashboardView(state, uiState, bountyList, summary) {
           <span class="pill pill-glow">X Layer escrow</span>
           <span class="pill">Structured rules</span>
           <span class="pill">On-chain audit trail</span>
+        </div>
+        <div class="auth-chip">
+          <span class="mini-label">Workspace</span>
+          <strong>${escapeHtml(auth.activeOrg?.name || 'Demo workspace')}</strong>
+          <span class="muted">${escapeHtml(auth.user?.displayName || 'Demo operator')} - ${escapeHtml(auth.role || 'owner')}</span>
         </div>
       </div>
       <div class="hero-panel panel-dark">
@@ -109,11 +183,26 @@ function renderDashboardView(state, uiState, bountyList, summary) {
     <section class="panel-dark feed-panel">
       <div class="section-head compact">
         <div>
-          <h3>Bounty explorer</h3>
-          <p>Filter and sort the live bounty feed, then open a bounty directly into detail or results.</p>
+          <h3>Reporting</h3>
+          <p>Operational metrics for verification speed, dispute frequency, and payout timing.</p>
         </div>
-        <span class="badge badge-dark">${bountyList.length} shown</span>
       </div>
+      <div class="stats-grid analytics-grid">
+        ${renderAnalyticsCard('Time to verify', analytics.timeToVerify ? `${formatDuration(analytics.timeToVerify.averageMinutes)}` : '--', `Median ${formatDuration(analytics.timeToVerify?.medianMinutes || 0)} · ${analytics.timeToVerify?.samples || 0} samples`)}
+        ${renderAnalyticsCard('Dispute rate', `${analytics.disputeRate || 0}%`, `${analytics.disputeCount || 0} disputes across ${analytics.verificationCount || 0} verifications`)}
+        ${renderAnalyticsCard('Payout latency', analytics.payoutLatency ? `${formatDuration(analytics.payoutLatency.averageMinutes)}` : '--', `Median ${formatDuration(analytics.payoutLatency?.medianMinutes || 0)} · ${analytics.payoutLatency?.samples || 0} samples`)}
+        ${renderAnalyticsCard('Pass rate', `${analytics.passRate || 0}%`, `${analytics.verificationCount || 0} total verifications`)}
+      </div>
+    </section>
+
+    <section class="panel-dark feed-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Bounty explorer</h3>
+            <p>Filter and sort the live bounty feed, then open a bounty directly into detail or results.</p>
+          </div>
+          <span class="badge badge-dark">${bountyList.length} shown</span>
+        </div>
       ${renderFilterBar(uiState)}
       <div class="bounty-grid">
         ${bountyList.map((item) => renderBountyCard(item, summary?.bountyId)).join('')}
@@ -175,6 +264,16 @@ function renderDashboardView(state, uiState, bountyList, summary) {
   `;
 }
 
+function renderAnalyticsCard(label, value, detail) {
+  return `
+    <article class="stat-card analytics-card">
+      <div class="label">${escapeHtml(label)}</div>
+      <strong class="value">${escapeHtml(value)}</strong>
+      <p class="muted">${escapeHtml(detail)}</p>
+    </article>
+  `;
+}
+
 function renderFilterBar(uiState) {
   return `
     <div class="filter-bar">
@@ -221,6 +320,7 @@ function renderBountyCard(item, selectedId) {
         <strong>${displayReward(item)}</strong>
       </div>
       <div class="bounty-meta">
+        <span class="pill">${escapeHtml(item.orgName || 'Workspace')}</span>
         <span class="pill">Owner ${escapeHtml(item.ownerHandle)}</span>
         <span class="pill">Deadline ${formatDate(item.deadline)}</span>
         <span class="pill">Rules ${item.requirements.length}</span>
@@ -236,6 +336,7 @@ function renderBountyCard(item, selectedId) {
 
 function renderCreateView(state, uiState) {
   const drafts = Array.isArray(uiState.requirementDrafts) && uiState.requirementDrafts.length ? uiState.requirementDrafts : [createDraft(), createDraft({ type: 'text_contains', params: defaultParamsForType('text_contains') })];
+  const activeOrg = state.auth?.activeOrg;
 
   return `
     <section class="screen-grid screen-split">
@@ -243,6 +344,11 @@ function renderCreateView(state, uiState) {
         <span class="eyebrow">Create bounty</span>
         <h2>Build a locked checklist, not a loose brief.</h2>
         <p>Use typed requirements so the verifier can stay deterministic and the payout path stays auditable.</p>
+        <div class="auth-chip">
+          <span class="mini-label">Active workspace</span>
+          <strong>${escapeHtml(activeOrg?.name || 'Demo workspace')}</strong>
+          <span class="muted">${escapeHtml(activeOrg?.slug || 'No org selected')}</span>
+        </div>
         <div class="template-box">
           <span class="mini-label">Supported requirements</span>
           <div class="template-pills">
@@ -344,6 +450,9 @@ function renderDetailView(state, bounty, uiState) {
   const verifications = (state.verifications || [])
     .filter((verification) => verification.bountyId === bounty.bountyId)
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  const disputes = (state.disputeSummaries || [])
+    .filter((dispute) => dispute.bountyId === bounty.bountyId)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
   const timeline = buildBountyTimeline(submissions, verifications);
   const editDrafts = Array.isArray(uiState.detailDrafts) && uiState.detailDrafts.length
     ? uiState.detailDrafts
@@ -376,6 +485,15 @@ function renderDetailView(state, bounty, uiState) {
           <div><span>Deadline</span><strong>${formatDate(bounty.deadline)}</strong></div>
           <div><span>Payout</span><strong class="${payoutClass(bounty.payoutStatus)}">${escapeHtml(bounty.payoutStatus || 'In escrow')}</strong></div>
           <div><span>Escrow</span><strong>${escapeHtml(bounty.escrowTxHash || 'Pending')}</strong></div>
+          <div><span>Chain</span><strong>${escapeHtml(String(bounty.chainId || 'n/a'))}</strong></div>
+          <div><span>Contract</span><strong>${escapeHtml(bounty.contractAddress || 'Pending')}</strong></div>
+          <div><span>Treasury</span><strong>${escapeHtml(bounty.treasuryAddress || 'Pending')}</strong></div>
+        </div>
+        <div class="stacked-info chain-links">
+          <div><span>Explorer</span>${renderExplorerLinks(bounty.explorerLinks)}</div>
+          <div><span>Contract version</span><strong>${escapeHtml(bounty.contractVersion || 'v1.0.0')}</strong></div>
+          <div><span>ABI version</span><strong>${escapeHtml(bounty.abiVersion || 'abi-v1')}</strong></div>
+          <div><span>Chain sync</span><strong>${escapeHtml(bounty.chainSyncStatus || 'pending')}</strong></div>
         </div>
         <div class="split-stack">
           <section>
@@ -413,6 +531,87 @@ function renderDetailView(state, bounty, uiState) {
                     )
                     .join('')
                 : '<p class="muted">No activity yet.</p>'}
+            </div>
+          </section>
+          <section>
+            <div class="section-head compact">
+              <div>
+                <h3>Disputes</h3>
+                <p>Appeals and reviewer decisions attached to this bounty.</p>
+              </div>
+            </div>
+            <div class="timeline-list">
+              ${disputes.length
+                ? disputes
+                    .map(
+                      (dispute) => `
+                        <div class="timeline-item">
+                          <div class="timeline-step ${dispute.status === 'resolved' ? 'good' : 'warn'}">D</div>
+                          <div>
+                            <strong>${escapeHtml(dispute.disputeId)}</strong>
+                            <p>${escapeHtml(dispute.reason || 'No reason provided')}</p>
+                            <p class="muted">
+                              ${escapeHtml(dispute.status)}${dispute.resolutionOutcome ? ` - ${escapeHtml(dispute.resolutionOutcome)}` : ''}
+                            </p>
+                            <p class="muted">${formatDate(dispute.createdAt)}${dispute.assignedReviewerHandle ? ` - Reviewer ${escapeHtml(dispute.assignedReviewerHandle)}` : ''}</p>
+                          </div>
+                        </div>
+                      `
+                    )
+                    .join('')
+                : '<p class="muted">No disputes opened for this bounty.</p>'}
+            </div>
+          </section>
+          <section>
+            <div class="section-head compact">
+              <div>
+                <h3>Audit trail</h3>
+                <p>Immutable event log for bounty, dispute, and admin actions.</p>
+              </div>
+            </div>
+            <div class="timeline-list">
+              ${(state.auditLogSummaries || [])
+                .filter((log) => log.bountyId === bounty.bountyId)
+                .slice(0, 6)
+                .map(
+                  (log) => `
+                    <div class="timeline-item">
+                      <div class="timeline-step ${log.severity === 'warn' ? 'warn' : 'neutral'}">A</div>
+                      <div>
+                        <strong>${escapeHtml(log.action)}</strong>
+                        <p>${escapeHtml(log.summary || '')}</p>
+                        <p class="muted">${formatDate(log.createdAt)}${log.actorHandle ? ` - ${escapeHtml(log.actorHandle)}` : ''}</p>
+                      </div>
+                    </div>
+                  `
+                )
+                .join('') || '<p class="muted">No audit events yet.</p>'}
+            </div>
+          </section>
+          <section>
+            <div class="section-head compact">
+              <div>
+                <h3>Version history</h3>
+                <p>Each edit creates a new immutable bounty version.</p>
+              </div>
+            </div>
+            <div class="timeline-list">
+              ${(state.bountyVersionSummaries || [])
+                .filter((version) => version.bountyId === bounty.bountyId)
+                .slice(0, 6)
+                .map(
+                  (version) => `
+                    <div class="timeline-item">
+                      <div class="timeline-step neutral">V</div>
+                      <div>
+                        <strong>Version ${escapeHtml(String(version.versionNumber || '1'))}</strong>
+                        <p>${escapeHtml(version.action || 'updated')}</p>
+                        <p class="muted">${formatDate(version.createdAt)}${version.actorHandle ? ` - ${escapeHtml(version.actorHandle)}` : ''}</p>
+                      </div>
+                    </div>
+                  `
+                )
+                .join('') || '<p class="muted">No version history yet.</p>'}
             </div>
           </section>
         </div>
@@ -515,6 +714,92 @@ function renderDetailView(state, bounty, uiState) {
           </div>
         </form>
 
+        <form class="panel-dark glass-form" data-form="sync-chain" style="${isEditMode ? 'display:none;' : ''}">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Chain sync</span>
+              <h2>Keep treasury and contract metadata pinned</h2>
+              <p>Track the contract version, ABI version, treasury signers, and on-chain transaction status.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field">
+              <span>Chain ID</span>
+              <input name="chainId" type="number" value="${Number(bounty.chainId || 80001)}" />
+            </label>
+            <label class="field">
+              <span>Contract address</span>
+              <input name="contractAddress" value="${escapeHtml(bounty.contractAddress || '')}" />
+            </label>
+            <label class="field">
+              <span>Contract version</span>
+              <input name="contractVersion" value="${escapeHtml(bounty.contractVersion || 'v1.0.0')}" />
+            </label>
+            <label class="field">
+              <span>ABI version</span>
+              <input name="abiVersion" value="${escapeHtml(bounty.abiVersion || 'abi-v1')}" />
+            </label>
+            <label class="field">
+              <span>Explorer base URL</span>
+              <input name="explorerBaseUrl" value="${escapeHtml(bounty.explorerBaseUrl || 'https://explorer.xlayer.tech')}" />
+            </label>
+            <label class="field">
+              <span>Contract verified</span>
+              <select name="contractVerified">
+                ${[
+                  ['true', 'Verified'],
+                  ['false', 'Unverified']
+                ]
+                  .map(([value, label]) => `<option value="${value}" ${String(Boolean(bounty.contractVerified)) === value ? 'selected' : ''}>${label}</option>`)
+                  .join('')}
+              </select>
+            </label>
+            <label class="field">
+              <span>Treasury type</span>
+              <input name="treasuryType" value="${escapeHtml(bounty.treasuryType || 'multisig')}" />
+            </label>
+            <label class="field">
+              <span>Treasury address</span>
+              <input name="treasuryAddress" value="${escapeHtml(bounty.treasuryAddress || '')}" />
+            </label>
+            <label class="field">
+              <span>Treasury threshold</span>
+              <input name="treasuryThreshold" type="number" min="1" value="${Number(bounty.treasuryThreshold || 2)}" />
+            </label>
+            <label class="field full">
+              <span>Treasury signers</span>
+              <textarea name="treasurySigners" rows="3" placeholder="One signer per line">${escapeHtml((bounty.treasurySigners || []).join('\n'))}</textarea>
+            </label>
+            <label class="field">
+              <span>Funding tx</span>
+              <input name="fundingTxHash" value="${escapeHtml(bounty.fundingTxHash || '')}" />
+            </label>
+            <label class="field">
+              <span>Payout tx</span>
+              <input name="payoutTxHash" value="${escapeHtml(bounty.payoutTxHash || '')}" />
+            </label>
+            <label class="field">
+              <span>Refund tx</span>
+              <input name="refundTxHash" value="${escapeHtml(bounty.refundTxHash || '')}" />
+            </label>
+            <label class="field">
+              <span>On-chain status</span>
+              <input name="onChainStatus" value="${escapeHtml(bounty.onChainStatus || 'draft')}" />
+            </label>
+            <label class="field">
+              <span>Chain sync status</span>
+              <input name="chainSyncStatus" value="${escapeHtml(bounty.chainSyncStatus || 'pending')}" />
+            </label>
+            <label class="field">
+              <span>Last synced at</span>
+              <input name="lastChainSyncedAt" value="${escapeHtml(bounty.lastChainSyncedAt || new Date().toISOString())}" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Sync chain state</button>
+          </div>
+        </form>
+
         <form class="panel-dark glass-form" data-form="submit-and-verify" style="${isEditMode ? 'display:none;' : ''}">
           <div class="section-head compact">
             <div>
@@ -544,6 +829,18 @@ function renderDetailView(state, bounty, uiState) {
               <span>Evidence content</span>
               <textarea name="content" rows="12">${escapeHtml(submissions[0]?.content || 'Paste the proof content here.')}</textarea>
             </label>
+            <label class="field full">
+              <span>Screenshot URLs</span>
+              <textarea name="screenshotUrls" rows="3" placeholder="One screenshot URL per line">${escapeHtml((submissions[0]?.screenshotUrls || []).join('\n'))}</textarea>
+            </label>
+            <label class="field full">
+              <span>Page snapshots</span>
+              <textarea name="pageSnapshots" rows="4" placeholder="One snapshot per line or JSON list">${escapeHtml((submissions[0]?.pageSnapshots || []).join('\n'))}</textarea>
+            </label>
+            <label class="field full">
+              <span>Evidence metadata</span>
+              <textarea name="evidenceMetadata" rows="4" placeholder='{"source":"browser","author":"@submitter"}'>${escapeHtml(JSON.stringify(submissions[0]?.evidenceMetadata || {}, null, 2))}</textarea>
+            </label>
           </div>
           <div class="form-actions">
             <button type="submit" class="primary-action">Submit and verify</button>
@@ -555,6 +852,42 @@ function renderDetailView(state, bounty, uiState) {
             ${bounty.latestVerification
               ? `<strong class="${bounty.latestVerification.overallPass ? 'status-good' : 'status-bad'}">${bounty.latestVerification.overallPass ? 'Pass' : 'Fail'}</strong>`
               : '<strong>Pending</strong>'}
+          </div>
+        </form>
+
+        <form class="panel-dark glass-form" data-form="create-dispute" style="${isEditMode ? 'display:none;' : ''}">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Open dispute</span>
+              <h2>Appeal the latest result</h2>
+              <p>Route the case to a reviewer with deadlines and resolution notes.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field full">
+              <span>Reason</span>
+              <textarea name="reason" rows="4" placeholder="Explain why this result should be reviewed."></textarea>
+            </label>
+            <label class="field full">
+              <span>Evidence URL</span>
+              <input name="evidenceUrl" value="${escapeHtml(submissions[0]?.url || '')}" />
+            </label>
+            <label class="field">
+              <span>Submission</span>
+              <input name="submissionId" value="${escapeHtml(submissions[0]?.submissionId || '')}" />
+            </label>
+            <label class="field">
+              <span>Verification</span>
+              <input name="verificationId" value="${escapeHtml(verifications[0]?.verificationId || '')}" />
+            </label>
+            <label class="field">
+              <span>Review deadline</span>
+              <input name="deadlineAt" value="${escapeHtml(new Date(Date.now() + 1000 * 60 * 60 * 72).toISOString())}" />
+            </label>
+          </div>
+          <input type="hidden" name="bountyId" value="${escapeHtml(bounty.bountyId)}" />
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Open dispute</button>
           </div>
         </form>
       </div>
@@ -629,6 +962,17 @@ function renderResultView(state, bounty, verification) {
       </div>
 
       <article class="panel-dark detail-panel">
+        <h3>Evidence quality</h3>
+        <div class="stacked-info">
+          <div><span>Score</span><strong>${escapeHtml(String(verification.evidenceQualityScore || 0))}/100</strong></div>
+          <div><span>Screenshots</span><strong>${escapeHtml(String(verification.evidenceSummary?.screenshotCount || 0))}</strong></div>
+          <div><span>Page snapshots</span><strong>${escapeHtml(String(verification.evidenceSummary?.pageSnapshotCount || 0))}</strong></div>
+          <div><span>Metadata keys</span><strong>${escapeHtml(String(verification.evidenceSummary?.metadataKeys?.length || 0))}</strong></div>
+        </div>
+        <pre><code>${escapeHtml(JSON.stringify(verification.evidenceSummary || {}, null, 2))}</code></pre>
+      </article>
+
+      <article class="panel-dark detail-panel">
         <div class="section-head compact">
           <div>
             <h3>Verification history</h3>
@@ -660,8 +1004,10 @@ function renderResultView(state, bounty, verification) {
 }
 
 function renderMineView(state, uiState) {
-  const owned = (state.bountySummaries || []).filter((bounty) => bounty.ownerHandle === state.currentPosterHandle);
-  const submitted = (state.submissions || []).filter((submission) => submission.contributorHandle === state.currentContributorHandle);
+  const posterHandle = state.auth?.user?.handle || state.currentPosterHandle;
+  const contributorHandle = state.auth?.user?.handle || state.currentContributorHandle;
+  const owned = (state.bountySummaries || []).filter((bounty) => bounty.ownerHandle === posterHandle);
+  const submitted = (state.submissions || []).filter((submission) => submission.contributorHandle === contributorHandle);
 
   return `
     <section class="screen-grid screen-split">
@@ -705,6 +1051,565 @@ function renderMineView(state, uiState) {
             .join('')}
         </div>
       </article>
+    </section>
+  `;
+}
+
+function renderAccountView(state) {
+  const auth = state.auth || {};
+  const pendingInvites = auth.invites || [];
+  const orgs = auth.availableOrgs?.length ? auth.availableOrgs : state.orgSummaries || [];
+  const reviewQueue = state.reviewQueue || [];
+
+  return `
+    <section class="screen-grid screen-split">
+      <article class="panel-dark detail-panel">
+        <span class="eyebrow">Workspace access</span>
+        <h2>Identity, organization, and role management</h2>
+        <p>Use email or wallet login, switch workspaces, and manage invites from one place.</p>
+        <div class="stacked-info">
+          <div><span>User</span><strong>${escapeHtml(auth.user?.displayName || 'Not signed in')}</strong></div>
+          <div><span>Handle</span><strong>${escapeHtml(auth.user?.handle || 'Demo mode')}</strong></div>
+          <div><span>Role</span><strong>${escapeHtml(auth.role || 'owner')}</strong></div>
+          <div><span>Active org</span><strong>${escapeHtml(auth.activeOrg?.name || 'Demo workspace')}</strong></div>
+          <div><span>Session</span><strong>${escapeHtml(auth.mode || 'demo')}</strong></div>
+        </div>
+
+        <div class="section-head compact">
+          <div>
+            <h3>Accessible workspaces</h3>
+            <p>Switch between all orgs the current identity can access.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${orgs
+            .map(
+              (org) => `
+                <div class="record-card ${org.orgId === auth.activeOrg?.orgId ? 'selected' : ''}">
+                  <div>
+                    <strong>${escapeHtml(org.name)}</strong>
+                    <p>${escapeHtml(org.role || 'member')} - ${org.memberCount || 0} members</p>
+                    <p class="muted">${escapeHtml(org.slug || '')}</p>
+                  </div>
+                  <button class="ghost-button" type="button" data-switch-org="${escapeHtml(org.orgId)}">${org.orgId === auth.activeOrg?.orgId ? 'Active' : 'Switch'}</button>
+                </div>
+              `
+            )
+            .join('')}
+        </div>
+
+        <div class="section-head compact">
+          <div>
+            <h3>Pending invites</h3>
+            <p>Accept an invite to join a workspace as the role it was issued for.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${pendingInvites.length
+            ? pendingInvites
+                .map(
+                  (invite) => `
+                    <div class="record-card">
+                      <div>
+                        <strong>${escapeHtml(invite.code)}</strong>
+                        <p>${escapeHtml(invite.orgId)} - ${escapeHtml(invite.role)}</p>
+                      </div>
+                      <form data-form="accept-invite" class="inline-form">
+                        <input name="code" type="hidden" value="${escapeHtml(invite.code)}" />
+                        <button class="ghost-button" type="submit">Accept</button>
+                      </form>
+                    </div>
+                  `
+                )
+                .join('')
+            : '<p class="muted">No pending invites for the current identity.</p>'}
+        </div>
+
+        <div class="section-head compact">
+          <div>
+            <h3>Reviewer queue</h3>
+            <p>Open disputes assigned to this workspace or this reviewer.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${reviewQueue.length
+            ? reviewQueue
+                .map(
+                  (dispute) => `
+                    <div class="record-card">
+                      <div>
+                        <strong>${escapeHtml(dispute.disputeId)}</strong>
+                        <p>${escapeHtml(dispute.bountyTitle || dispute.bountyId)} - ${escapeHtml(dispute.status)}</p>
+                        <p class="muted">${escapeHtml(dispute.reason || '')}</p>
+                      </div>
+                      <form class="inline-form" data-form="resolve-dispute">
+                        <input type="hidden" name="disputeId" value="${escapeHtml(dispute.disputeId)}" />
+                        <select name="outcome">
+                          ${['release', 'refund', 'reverify', 'deny']
+                            .map((outcome) => `<option value="${outcome}">${outcome}</option>`)
+                            .join('')}
+                        </select>
+                        <input name="resolutionNotes" placeholder="Reviewer notes" />
+                        <button class="ghost-button" type="submit">Resolve</button>
+                      </form>
+                    </div>
+                  `
+                )
+                .join('')
+            : '<p class="muted">No active disputes in the queue.</p>'}
+        </div>
+
+        <div class="section-head compact">
+          <div>
+            <h3>Recent audit events</h3>
+            <p>Latest immutable actions across the workspace.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${(state.auditLogSummaries || [])
+            .slice(0, 8)
+            .map(
+              (log) => `
+                <div class="record-card">
+                  <div>
+                    <strong>${escapeHtml(log.action)}</strong>
+                    <p>${escapeHtml(log.summary || '')}</p>
+                    <p class="muted">${formatDate(log.createdAt)}${log.actorHandle ? ` - ${escapeHtml(log.actorHandle)}` : ''}</p>
+                  </div>
+                </div>
+              `
+            )
+            .join('') || '<p class="muted">No audit events yet.</p>'}
+        </div>
+
+        <div class="section-head compact">
+          <div>
+            <h3>Notifications</h3>
+            <p>Email, in-app, and webhook events tied to this identity or workspace.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${(state.notificationSummaries || [])
+            .slice(0, 8)
+            .map(
+              (notification) => `
+                <div class="record-card">
+                  <div>
+                    <strong>${escapeHtml(notification.title || notification.category || 'Notification')}</strong>
+                    <p>${escapeHtml(notification.body || '')}</p>
+                    <p class="muted">${formatDate(notification.createdAt)}${notification.recipientHandle ? ` - ${escapeHtml(notification.recipientHandle)}` : ''}</p>
+                    <p class="muted">${escapeHtml((notification.channels || []).join(', '))}${notification.readAt ? ' - read' : ' - unread'}</p>
+                  </div>
+                </div>
+              `
+            )
+            .join('') || '<p class="muted">No notifications yet.</p>'}
+        </div>
+      </article>
+
+      <div class="detail-stack">
+        <form class="panel-dark glass-form" data-form="email-login">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Email login</span>
+              <h2>Sign in with a work email</h2>
+              <p>For now this is a secure local session model that we can later replace with a real identity provider.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field full">
+              <span>Email</span>
+              <input name="email" type="email" placeholder="owner@company.com" />
+            </label>
+            <label class="field">
+              <span>Display name</span>
+              <input name="displayName" placeholder="Owner Name" />
+            </label>
+            <label class="field">
+              <span>Handle</span>
+              <input name="handle" placeholder="@owner" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Continue</button>
+          </div>
+        </form>
+
+        <form class="panel-dark glass-form" data-form="wallet-login">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Wallet login</span>
+              <h2>Sign in with a wallet address</h2>
+              <p>This uses a signed challenge. If a wallet extension is available, we can sign automatically.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field full">
+              <span>Wallet address</span>
+              <input name="walletAddress" placeholder="0xabc123..." />
+            </label>
+            <label class="field">
+              <span>Display name</span>
+              <input name="displayName" placeholder="Treasury signer" />
+            </label>
+            <label class="field">
+              <span>Handle</span>
+              <input name="handle" placeholder="@signer" />
+            </label>
+            <label class="field full">
+              <span>Signature override</span>
+              <textarea name="signature" rows="4" placeholder="Optional fallback if the browser cannot access a wallet extension."></textarea>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Connect wallet</button>
+            <button type="button" class="secondary-action" data-logout>Logout</button>
+          </div>
+        </form>
+
+        <form class="panel-dark glass-form" data-form="create-org">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Create organization</span>
+              <h2>Start a new team workspace</h2>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field full">
+              <span>Workspace name</span>
+              <input name="name" placeholder="Acme Bounties" />
+            </label>
+            <label class="field full">
+              <span>Slug</span>
+              <input name="slug" placeholder="acme-bounties" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Create workspace</button>
+          </div>
+        </form>
+
+        <form class="panel-dark glass-form" data-form="invite-member">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Invite member</span>
+              <h2>Add someone to the active workspace</h2>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field full">
+              <span>Org ID</span>
+              <input name="orgId" value="${escapeHtml(auth.activeOrg?.orgId || '')}" />
+            </label>
+            <label class="field full">
+              <span>Email</span>
+              <input name="email" placeholder="reviewer@company.com" />
+            </label>
+            <label class="field full">
+              <span>Wallet address</span>
+              <input name="walletAddress" placeholder="0x..." />
+            </label>
+            <label class="field">
+              <span>Handle</span>
+              <input name="handle" placeholder="@reviewer" />
+            </label>
+            <label class="field">
+              <span>Role</span>
+              <select name="role">
+                ${['owner', 'admin', 'poster', 'reviewer', 'contributor']
+                  .map((role) => `<option value="${role}">${role}</option>`)
+                  .join('')}
+              </select>
+            </label>
+            <label class="field full">
+              <span>Expires at</span>
+              <input name="expiresAt" value="${escapeHtml(new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString())}" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Create invite</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminView(state, uiState) {
+  const auth = state.auth || {};
+  const filters = uiState.adminFilters || { search: '', type: 'all', severity: 'all', status: 'all' };
+  const search = String(filters.search || '').trim().toLowerCase();
+  const matchText = (value) => !search || String(value || '').toLowerCase().includes(search);
+  const bounties = (state.bountySummaries || []).filter((bounty) => {
+    const statusMatch = filters.status === 'all' || bounty.status === filters.status;
+    return statusMatch && matchText([bounty.title, bounty.ownerHandle, bounty.requirementSummary, bounty.bountyId].join(' '));
+  });
+  const disputes = (state.disputeSummaries || []).filter((dispute) => {
+    const statusMatch = filters.status === 'all' || dispute.status === filters.status;
+    return statusMatch && matchText([dispute.disputeId, dispute.reason, dispute.bountyTitle, dispute.bountyId].join(' '));
+  });
+  const notifications = (state.notificationSummaries || []).filter((notification) => {
+    const typeMatch = filters.type === 'all' || notification.category === filters.type;
+    return typeMatch && matchText([notification.title, notification.body, notification.recipientHandle, notification.relatedId].join(' '));
+  });
+  const auditLogs = (state.auditLogSummaries || []).filter((log) => {
+    const severityMatch = filters.severity === 'all' || log.severity === filters.severity;
+    return severityMatch && matchText([log.action, log.summary, log.actorHandle, log.entityId].join(' '));
+  });
+  const observability = (state.observabilityEvents || []).filter((event) => matchText([event.kind, event.route, event.message, event.requestId].join(' ')));
+
+  return `
+    <section class="screen-grid screen-split">
+      <article class="panel-dark detail-panel">
+        <span class="eyebrow">Admin console</span>
+        <h2>Moderation, overrides, refunds, and incident review</h2>
+        <p>Search the operational surface area and act on the most urgent records first.</p>
+        <div class="stacked-info">
+          <div><span>Bounties</span><strong>${bounties.length}</strong></div>
+          <div><span>Disputes</span><strong>${disputes.length}</strong></div>
+          <div><span>Notifications</span><strong>${notifications.length}</strong></div>
+          <div><span>Audit logs</span><strong>${auditLogs.length}</strong></div>
+        </div>
+        <div class="section-head compact">
+          <div>
+            <h3>Search and filters</h3>
+            <p>Filter across entities, audit history, and operational incidents.</p>
+          </div>
+        </div>
+        <div class="field-grid">
+          <label class="field full">
+            <span>Search</span>
+            <input data-admin-filter="search" value="${escapeHtml(filters.search || '')}" placeholder="Search everything" />
+          </label>
+          <label class="field">
+            <span>Status</span>
+            <select data-admin-filter="status">
+              ${['all', 'Open', 'Funded', 'Paid', 'Refunded', 'Disputed', 'resolved', 'open', 'escalated']
+                .map((value) => `<option value="${value}" ${value === (filters.status || 'all') ? 'selected' : ''}>${value === 'all' ? 'All statuses' : value}</option>`)
+                .join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span>Type</span>
+            <select data-admin-filter="type">
+              ${['all', 'submission', 'verification', 'dispute', 'refund', 'info']
+                .map((value) => `<option value="${value}" ${value === (filters.type || 'all') ? 'selected' : ''}>${value === 'all' ? 'All types' : value}</option>`)
+                .join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span>Severity</span>
+            <select data-admin-filter="severity">
+              ${['all', 'info', 'warn', 'error']
+                .map((value) => `<option value="${value}" ${value === (filters.severity || 'all') ? 'selected' : ''}>${value === 'all' ? 'All severities' : value}</option>`)
+                .join('')}
+            </select>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="secondary-action" data-export-analytics="json">Export analytics JSON</button>
+          <button type="button" class="secondary-action" data-export-analytics="csv">Export analytics CSV</button>
+        </div>
+      </article>
+
+      <div class="detail-stack">
+        <form class="panel-dark glass-form" data-form="admin-override-bounty">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Override / refund</span>
+              <h2>Moderate a bounty</h2>
+              <p>Use this for manual status corrections, refunds, or incident response.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field full">
+              <span>Bounty ID</span>
+              <input name="bountyId" placeholder="bnty_0001" />
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <select name="status">
+                ${['Open', 'Funded', 'Paid', 'Refunded', 'Disputed']
+                  .map((value) => `<option value="${value}">${value}</option>`)
+                  .join('')}
+              </select>
+            </label>
+            <label class="field">
+              <span>Refund tx hash</span>
+              <input name="refundTxHash" placeholder="0x..." />
+            </label>
+            <label class="field full">
+              <span>Reason</span>
+              <textarea name="reason" rows="4" placeholder="Why was this override or refund required?"></textarea>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Apply action</button>
+          </div>
+        </form>
+
+        <form class="panel-dark glass-form" data-form="admin-incident-review">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">Incident review</span>
+              <h2>Review a log or dispute</h2>
+              <p>Attach notes and a decision to any audit or incident record.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field">
+              <span>Target type</span>
+              <input name="targetType" placeholder="audit, dispute, bounty" />
+            </label>
+            <label class="field">
+              <span>Target ID</span>
+              <input name="targetId" placeholder="aud_0001" />
+            </label>
+            <label class="field full">
+              <span>Decision</span>
+              <input name="decision" placeholder="reviewed, escalated, closed" />
+            </label>
+            <label class="field full">
+              <span>Notes</span>
+              <textarea name="notes" rows="4" placeholder="What should the incident record say?"></textarea>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-action">Record review</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="split-grid">
+      <article class="panel-dark detail-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Bounties</h3>
+            <p>Matching bounty records.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${bounties
+            .slice(0, 12)
+            .map(
+              (bounty) => `
+                <div class="record-card">
+                  <div>
+                    <strong>${escapeHtml(bounty.title)}</strong>
+                    <p>${escapeHtml(bounty.bountyId)} - ${escapeHtml(bounty.status)}</p>
+                    <p class="muted">${escapeHtml(bounty.ownerHandle || '')} - ${escapeHtml(bounty.payoutStatus || '')}</p>
+                  </div>
+                  <button class="ghost-button" type="button" data-route="detail" data-bounty-id="${escapeHtml(bounty.bountyId)}">Open</button>
+                </div>
+              `
+            )
+            .join('') || '<p class="muted">No matching bounties.</p>'}
+        </div>
+      </article>
+
+      <article class="panel-dark detail-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Disputes</h3>
+            <p>Open, resolved, and escalated cases.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${disputes
+            .slice(0, 12)
+            .map(
+              (dispute) => `
+                <div class="record-card">
+                  <div>
+                    <strong>${escapeHtml(dispute.disputeId)}</strong>
+                    <p>${escapeHtml(dispute.bountyTitle || dispute.bountyId)} - ${escapeHtml(dispute.status)}</p>
+                    <p class="muted">${escapeHtml(dispute.reason || '')}</p>
+                  </div>
+                </div>
+              `
+            )
+            .join('') || '<p class="muted">No matching disputes.</p>'}
+        </div>
+      </article>
+    </section>
+
+    <section class="split-grid">
+      <article class="panel-dark detail-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Notifications</h3>
+            <p>Searchable delivery inbox.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${notifications
+            .slice(0, 12)
+            .map(
+              (notification) => `
+                <div class="record-card">
+                  <div>
+                    <strong>${escapeHtml(notification.title || notification.category || 'Notification')}</strong>
+                    <p>${escapeHtml(notification.body || '')}</p>
+                    <p class="muted">${escapeHtml(notification.recipientHandle || notification.orgName || '')} - ${escapeHtml(notification.channels?.join(', ') || '')}</p>
+                  </div>
+                </div>
+              `
+            )
+            .join('') || '<p class="muted">No matching notifications.</p>'}
+        </div>
+      </article>
+
+      <article class="panel-dark detail-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Audit logs</h3>
+            <p>Immutable searchable action log.</p>
+          </div>
+        </div>
+        <div class="record-list">
+          ${auditLogs
+            .slice(0, 12)
+            .map(
+              (log) => `
+                <div class="record-card">
+                  <div>
+                    <strong>${escapeHtml(log.action)}</strong>
+                    <p>${escapeHtml(log.summary || '')}</p>
+                    <p class="muted">${escapeHtml(log.actorHandle || '')} - ${formatDate(log.createdAt)}</p>
+                  </div>
+                </div>
+              `
+            )
+            .join('') || '<p class="muted">No matching audit logs.</p>'}
+        </div>
+      </article>
+    </section>
+
+    <section class="panel-dark feed-panel">
+      <div class="section-head compact">
+        <div>
+          <h3>Observability</h3>
+          <p>Structured traces and error records.</p>
+        </div>
+      </div>
+      <div class="stats-grid analytics-grid">
+        ${renderAnalyticsCard('Traces', String((state.observabilityEvents || []).filter((event) => event.kind === 'trace').length), 'Recorded trace events')}
+        ${renderAnalyticsCard('Errors', String((state.observabilityEvents || []).filter((event) => event.level === 'error' || Number(event.statusCode || 0) >= 500).length), 'Captured error-level events')}
+        ${renderAnalyticsCard('Latency', formatDuration(Math.round((state.observabilityEvents || []).reduce((sum, event) => sum + Number(event.durationMs || 0), 0) / Math.max(1, (state.observabilityEvents || []).length || 1))), 'Average event duration')}
+        ${renderAnalyticsCard('Uptime', 'Healthy', 'Health endpoint available')}
+      </div>
+      <div class="record-list">
+        ${(observability || []).slice(0, 8).map((event) => `
+          <div class="record-card">
+            <div>
+              <strong>${escapeHtml(event.kind)}</strong>
+              <p>${escapeHtml(event.message || event.route || '')}</p>
+              <p class="muted">${escapeHtml(event.source || '')} - ${escapeHtml(String(event.durationMs || 0))}ms - ${escapeHtml(String(event.statusCode || 0))}</p>
+            </div>
+          </div>
+        `).join('') || '<p class="muted">No observability events yet.</p>'}
+      </div>
     </section>
   `;
 }
@@ -819,6 +1724,38 @@ function displayReward(bounty) {
     return '--';
   }
   return `${new Intl.NumberFormat('en-US').format(Number(bounty.rewardAmount || 0))} ${bounty.rewardToken || 'USDC'}`;
+}
+
+function formatDuration(minutes) {
+  const value = Number(minutes || 0);
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0m';
+  }
+  if (value < 60) {
+    return `${value}m`;
+  }
+  const hours = Math.floor(value / 60);
+  const remainder = value % 60;
+  return `${hours}h ${remainder}m`;
+}
+
+function renderExplorerLinks(links = {}) {
+  const entries = [
+    ['Escrow', links.escrow],
+    ['Funding', links.funding],
+    ['Payout', links.payout],
+    ['Refund', links.refund],
+    ['Contract', links.contract],
+    ['Treasury', links.treasury]
+  ].filter(([, href]) => Boolean(href));
+
+  if (entries.length === 0) {
+    return '<strong class="muted">Pending</strong>';
+  }
+
+  return entries
+    .map(([label, href]) => `<a class="pill pill-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`)
+    .join(' ');
 }
 
 function payoutClass(status) {

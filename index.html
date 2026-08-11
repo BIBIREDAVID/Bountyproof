@@ -1,4 +1,4 @@
-git<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -7,13 +7,14 @@ git<!doctype html>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#view-root">Skip to content</a>
     <div class="page-shell">
       <header class="hero">
         <div class="eyebrow">AI-verified bounties on X Layer</div>
         <h1>BountyProof</h1>
         <p class="lede">
-          A focused MVP for posting objective bounty requirements, verifying evidence, and releasing funds when
-          every check passes.
+          A workspace-grade bounty platform for posting objective requirements, verifying evidence, and releasing
+          funds only when every check passes.
         </p>
         <div class="hero-actions">
           <button class="primary-action" data-route="dashboard">View bounty list</button>
@@ -24,12 +25,13 @@ git<!doctype html>
       <main class="workspace">
         <aside class="sidebar">
           <div class="panel brand-panel">
-            <div class="brand-mark">BP</div>
-            <div>
-              <strong>BountyProof</strong>
-              <p>Batch 3 workflow</p>
-            </div>
+          <div class="brand-mark">BP</div>
+          <div>
+            <strong>BountyProof</strong>
+            <p>SIWE, CSRF, and disputes</p>
           </div>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme">Theme</button>
+        </div>
 
           <nav class="panel nav-panel">
             <button class="nav-link is-active" data-route="dashboard">Bounty list</button>
@@ -37,15 +39,17 @@ git<!doctype html>
             <button class="nav-link" data-route="detail">Bounty detail</button>
             <button class="nav-link" data-route="result">Verification result</button>
             <button class="nav-link" data-route="mine">My bounties</button>
+            <button class="nav-link" data-route="account">Workspace</button>
+            <button class="nav-link" data-route="admin">Admin console</button>
           </nav>
 
           <section class="panel note-panel">
-            <h2>Batch 3 scope</h2>
+            <h2>Batch 2 scope</h2>
             <ul>
-              <li>Route-driven bounty screens</li>
-              <li>Requirement builder rows</li>
-              <li>Filtering and transaction history</li>
-              <li>Payout statuses through verification</li>
+              <li>Signed wallet challenge flow</li>
+              <li>CSRF and idempotency hardening</li>
+              <li>Dispute creation and reviewer queues</li>
+              <li>Reviewer decision workflow</li>
             </ul>
           </section>
         </aside>

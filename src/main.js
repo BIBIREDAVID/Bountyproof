@@ -5,10 +5,18 @@ const uiState = {
   selectedBountyId: null,
   detailMode: 'view',
   detailDraftBountyId: null,
+  theme: loadThemePreference(),
+  loading: true,
   filters: {
     search: '',
     status: 'all',
     sort: 'latest'
+  },
+  adminFilters: {
+    search: '',
+    type: 'all',
+    severity: 'all',
+    status: 'all'
   },
   detailDrafts: [],
   requirementDrafts: createDefaultRequirementDrafts()
@@ -19,7 +27,10 @@ let appState = null;
 await init();
 
 async function init() {
+  applyTheme(uiState.theme);
+  render();
   appState = await fetchState();
+  uiState.loading = false;
   syncRouteFromHash();
   if (!uiState.selectedBountyId) {
     uiState.selectedBountyId = getDefaultBountyId();
@@ -42,6 +53,52 @@ async function fetchState() {
     throw new Error(`Failed to load state: ${response.status}`);
   }
   return response.json();
+}
+
+async function apiJson(url, { method = 'GET', body, headers = {}, idempotent = false } = {}) {
+  const finalHeaders = { ...headers };
+  const isMutating = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method.toUpperCase());
+  if (body !== undefined && body !== null && !finalHeaders['Content-Type']) {
+    finalHeaders['Content-Type'] = 'application/json';
+  }
+  if (isMutating && appState?.auth?.csrfToken) {
+    finalHeaders['X-CSRF-Token'] = appState.auth.csrfToken;
+  }
+  if (isMutating && idempotent) {
+    finalHeaders['Idempotency-Key'] = cryptoRandomId();
+  }
+
+  const response = await fetch(url, {
+    method,
+    headers: finalHeaders,
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  return response;
+}
+
+function cryptoRandomId() {
+  return globalThis.crypto?.randomUUID?.() || `req_${Math.random().toString(16).slice(2)}`;
+}
+
+function loadThemePreference() {
+  const stored = window.localStorage?.getItem('bountyproof-theme');
+  return stored === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === 'light' ? 'light' : 'dark';
+  document.body.dataset.theme = nextTheme;
+  if (nextTheme === 'light') {
+    document.body.classList.add('theme-light');
+  } else {
+    document.body.classList.remove('theme-light');
+  }
+  window.localStorage?.setItem('bountyproof-theme', nextTheme);
+  const toggle = document.querySelector('[data-theme-toggle]');
+  if (toggle) {
+    toggle.textContent = nextTheme === 'light' ? 'Dark theme' : 'Light theme';
+    toggle.setAttribute('aria-pressed', String(nextTheme === 'light'));
+  }
 }
 
 function bindEvents() {
@@ -72,6 +129,15 @@ function bindEvents() {
     };
   });
 
+  document.querySelectorAll('[data-theme-toggle]').forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      uiState.theme = uiState.theme === 'light' ? 'dark' : 'light';
+      applyTheme(uiState.theme);
+      render();
+    };
+  });
+
   document.querySelectorAll('[data-filter]').forEach((control) => {
     const field = control.dataset.filter;
     if (control.tagName === 'INPUT') {
@@ -82,6 +148,21 @@ function bindEvents() {
     } else {
       control.onchange = () => {
         uiState.filters[field] = control.value;
+        render();
+      };
+    }
+  });
+
+  document.querySelectorAll('[data-admin-filter]').forEach((control) => {
+    const field = control.dataset.adminFilter;
+    if (control.tagName === 'INPUT') {
+      control.oninput = () => {
+        uiState.adminFilters[field] = control.value;
+        render();
+      };
+    } else {
+      control.onchange = () => {
+        uiState.adminFilters[field] = control.value;
         render();
       };
     }
@@ -146,10 +227,79 @@ function bindEvents() {
     });
   }
 
+  const syncChainForm = document.querySelector('[data-form="sync-chain"]');
+  if (syncChainForm) {
+    syncChainForm.onsubmit = handleSyncChain;
+  }
+
   document.querySelectorAll('[data-delete-bounty]').forEach((button) => {
     button.onclick = async (event) => {
       event.preventDefault();
       await handleDeleteBounty(button.dataset.deleteBounty);
+    };
+  });
+
+  const emailLoginForm = document.querySelector('[data-form="email-login"]');
+  if (emailLoginForm) {
+    emailLoginForm.onsubmit = handleEmailLogin;
+  }
+
+  const walletLoginForm = document.querySelector('[data-form="wallet-login"]');
+  if (walletLoginForm) {
+    walletLoginForm.onsubmit = handleWalletLogin;
+  }
+
+  const orgForm = document.querySelector('[data-form="create-org"]');
+  if (orgForm) {
+    orgForm.onsubmit = handleCreateOrg;
+  }
+
+  const inviteForm = document.querySelector('[data-form="invite-member"]');
+  if (inviteForm) {
+    inviteForm.onsubmit = handleCreateInvite;
+  }
+
+  const disputeForm = document.querySelector('[data-form="create-dispute"]');
+  if (disputeForm) {
+    disputeForm.onsubmit = handleCreateDispute;
+  }
+
+  const adminOverrideForm = document.querySelector('[data-form="admin-override-bounty"]');
+  if (adminOverrideForm) {
+    adminOverrideForm.onsubmit = handleAdminOverrideBounty;
+  }
+
+  const adminIncidentForm = document.querySelector('[data-form="admin-incident-review"]');
+  if (adminIncidentForm) {
+    adminIncidentForm.onsubmit = handleAdminIncidentReview;
+  }
+
+  document.querySelectorAll('[data-export-analytics]').forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      await handleExportAnalytics(button.dataset.exportAnalytics);
+    };
+  });
+
+  document.querySelectorAll('[data-form="resolve-dispute"]').forEach((form) => {
+    form.onsubmit = handleResolveDispute;
+  });
+
+  document.querySelectorAll('[data-form="accept-invite"]').forEach((form) => {
+    form.onsubmit = handleAcceptInvite;
+  });
+
+  document.querySelectorAll('[data-switch-org]').forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      await handleSwitchOrg(button.dataset.switchOrg);
+    };
+  });
+
+  document.querySelectorAll('[data-logout]').forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      await handleLogout();
     };
   });
 }
@@ -166,10 +316,10 @@ async function handleCreateBounty(event) {
     params: parseParams(draft.params, draft.type)
   }));
 
-  const response = await fetch('/api/bounties', {
+  const response = await apiJson('/api/bounties', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
+      orgId: appState?.auth?.activeOrg?.orgId || '',
       title: formData.get('title'),
       rewardAmount: Number(formData.get('rewardAmount')),
       rewardToken: formData.get('rewardToken'),
@@ -177,7 +327,8 @@ async function handleCreateBounty(event) {
       ownerHandle: formData.get('ownerHandle'),
       requirementSummary: formData.get('requirementSummary'),
       requirements
-    })
+    },
+    idempotent: true
   });
 
   if (!response.ok) {
@@ -198,17 +349,20 @@ async function handleSubmitAndVerify(event) {
   const formData = new FormData(event.currentTarget);
   const bountyId = String(formData.get('bountyId') || uiState.selectedBountyId || '');
 
-  const submissionResponse = await fetch('/api/submissions', {
+  const submissionResponse = await apiJson('/api/submissions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
       bountyId,
       contributorHandle: formData.get('contributorHandle'),
       url: formData.get('url'),
       submittedAt: formData.get('submittedAt'),
       tweetCount: Number(formData.get('tweetCount')),
-      content: formData.get('content')
-    })
+      content: formData.get('content'),
+      screenshotUrls: formData.get('screenshotUrls'),
+      pageSnapshots: formData.get('pageSnapshots'),
+      evidenceMetadata: formData.get('evidenceMetadata')
+    },
+    idempotent: true
   });
 
   if (!submissionResponse.ok) {
@@ -217,13 +371,13 @@ async function handleSubmitAndVerify(event) {
   }
 
   const submissionPayload = await submissionResponse.json();
-  const verificationResponse = await fetch('/api/verifications', {
+  const verificationResponse = await apiJson('/api/verifications', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
       bountyId,
       submissionId: submissionPayload.submission.submissionId
-    })
+    },
+    idempotent: true
   });
 
   if (!verificationResponse.ok) {
@@ -437,10 +591,9 @@ async function handleUpdateBounty(event) {
     params: parseParams(draft.params, draft.type)
   }));
 
-  const response = await fetch(`/api/bounties/${encodeURIComponent(bountyId)}`, {
+  const response = await apiJson(`/api/bounties/${encodeURIComponent(bountyId)}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
       title: formData.get('title'),
       rewardAmount: Number(formData.get('rewardAmount')),
       rewardToken: formData.get('rewardToken'),
@@ -450,7 +603,8 @@ async function handleUpdateBounty(event) {
       status: formData.get('status'),
       escrowTxHash: formData.get('escrowTxHash'),
       requirements
-    })
+    },
+    idempotent: true
   });
 
   if (!response.ok) {
@@ -467,6 +621,47 @@ async function handleUpdateBounty(event) {
   render();
 }
 
+async function handleSyncChain(event) {
+  event.preventDefault();
+  const bountyId = uiState.selectedBountyId || getDefaultBountyId();
+  const formData = new FormData(event.currentTarget);
+  const response = await apiJson(`/api/bounties/${encodeURIComponent(bountyId)}/chain-sync`, {
+    method: 'POST',
+    body: {
+      chainId: Number(formData.get('chainId')),
+      contractAddress: formData.get('contractAddress'),
+      contractVersion: formData.get('contractVersion'),
+      abiVersion: formData.get('abiVersion'),
+      contractVerified: formData.get('contractVerified') === 'true',
+      explorerBaseUrl: formData.get('explorerBaseUrl'),
+      treasuryType: formData.get('treasuryType'),
+      treasuryAddress: formData.get('treasuryAddress'),
+      treasuryThreshold: Number(formData.get('treasuryThreshold')),
+      treasurySigners: String(formData.get('treasurySigners') || '')
+        .split(/\r?\n|,/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+      fundingTxHash: formData.get('fundingTxHash'),
+      payoutTxHash: formData.get('payoutTxHash'),
+      refundTxHash: formData.get('refundTxHash'),
+      onChainStatus: formData.get('onChainStatus'),
+      chainSyncStatus: formData.get('chainSyncStatus'),
+      lastChainSyncedAt: formData.get('lastChainSyncedAt')
+    },
+    idempotent: true
+  });
+
+  if (!response.ok) {
+    alert('Failed to sync chain state.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload.state;
+  uiState.selectedBountyId = payload.bounty.bountyId;
+  render();
+}
+
 async function handleDeleteBounty(bountyId) {
   if (!bountyId) {
     return;
@@ -476,8 +671,10 @@ async function handleDeleteBounty(bountyId) {
     return;
   }
 
-  const response = await fetch(`/api/bounties/${encodeURIComponent(bountyId)}`, {
-    method: 'DELETE'
+  const response = await apiJson(`/api/bounties/${encodeURIComponent(bountyId)}`, {
+    method: 'DELETE',
+    body: {},
+    idempotent: true
   });
 
   if (!response.ok) {
@@ -493,6 +690,337 @@ async function handleDeleteBounty(bountyId) {
   uiState.detailDraftBountyId = null;
   navigate('dashboard', getDefaultBountyId(), false);
   render();
+}
+
+async function handleEmailLogin(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const response = await apiJson('/api/auth/email-login', {
+    method: 'POST',
+    body: {
+      email: formData.get('email'),
+      displayName: formData.get('displayName'),
+      handle: formData.get('handle'),
+      activeOrgId: formData.get('activeOrgId')
+    }
+  });
+
+  if (!response.ok) {
+    alert('Email login failed.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload;
+  uiState.selectedBountyId = getDefaultBountyId();
+  navigate('account', uiState.selectedBountyId, false);
+  render();
+}
+
+async function handleWalletLogin(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  let walletAddress = String(formData.get('walletAddress') || '').trim();
+  if (!walletAddress && window.ethereum?.request) {
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      walletAddress = String(accounts?.[0] || '').trim();
+    } catch (error) {
+      alert(`Wallet connect failed: ${error.message}`);
+      return;
+    }
+  }
+  if (!walletAddress) {
+    walletAddress = String(window.prompt('Enter the wallet address to challenge') || '').trim();
+  }
+  if (!walletAddress) {
+    alert('Wallet address is required.');
+    return;
+  }
+
+  const challengeResponse = await apiJson('/api/auth/wallet-challenge', {
+    method: 'POST',
+    body: {
+      walletAddress
+    }
+  });
+
+  if (!challengeResponse.ok) {
+    alert('Failed to request wallet challenge.');
+    return;
+  }
+
+  const challengePayload = await challengeResponse.json();
+  const challenge = challengePayload.challenge;
+  let signature = String(formData.get('signature') || '').trim();
+  walletAddress = walletAddress || String(challenge.address || '').trim();
+
+  if (!signature && window.ethereum?.request) {
+    try {
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [challenge.message, walletAddress]
+      });
+    } catch (error) {
+      alert(`Wallet signing failed: ${error.message}`);
+      return;
+    }
+  }
+
+  if (!signature) {
+    signature = window.prompt(`Sign this message in your wallet and paste the signature:\n\n${challenge.message}`) || '';
+  }
+
+  const response = await apiJson('/api/auth/wallet-login', {
+    method: 'POST',
+    body: {
+      walletAddress,
+      displayName: formData.get('displayName'),
+      handle: formData.get('handle'),
+      activeOrgId: formData.get('activeOrgId'),
+      challengeId: challenge.challengeId,
+      nonce: challenge.nonce,
+      signature,
+      domain: challenge.domain,
+      uri: challenge.uri
+    }
+  });
+
+  if (!response.ok) {
+    alert('Wallet login failed.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload;
+  uiState.selectedBountyId = getDefaultBountyId();
+  navigate('account', uiState.selectedBountyId, false);
+  render();
+}
+
+async function handleLogout() {
+  const response = await apiJson('/api/auth/logout', { method: 'POST', body: {}, idempotent: true });
+  if (!response.ok) {
+    alert('Logout failed.');
+    return;
+  }
+  const payload = await response.json();
+  appState = payload.state;
+  uiState.selectedBountyId = getDefaultBountyId();
+  navigate('dashboard', uiState.selectedBountyId, false);
+  render();
+}
+
+async function handleCreateOrg(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const response = await apiJson('/api/orgs', {
+    method: 'POST',
+    body: {
+      name: formData.get('name'),
+      slug: formData.get('slug')
+    },
+    idempotent: true
+  });
+
+  if (!response.ok) {
+    alert('Failed to create organization.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleCreateInvite(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const orgId = String(formData.get('orgId') || appState?.auth?.activeOrg?.orgId || '');
+  const response = await apiJson(`/api/orgs/${encodeURIComponent(orgId)}/invites`, {
+    method: 'POST',
+    body: {
+      email: formData.get('email'),
+      walletAddress: formData.get('walletAddress'),
+      handle: formData.get('handle'),
+      role: formData.get('role'),
+      expiresAt: formData.get('expiresAt')
+    },
+    idempotent: true
+  });
+
+  if (!response.ok) {
+    alert('Failed to create invite.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleAcceptInvite(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const code = String(formData.get('code') || '').trim();
+  if (!code) {
+    alert('Invite code is required.');
+    return;
+  }
+
+  const response = await apiJson(`/api/invites/${encodeURIComponent(code)}/accept`, {
+    method: 'POST',
+    body: {},
+    idempotent: true
+  });
+
+  if (!response.ok) {
+    alert('Failed to accept invite.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleSwitchOrg(orgId) {
+  if (!orgId) {
+    return;
+  }
+  const response = await apiJson(`/api/orgs/${encodeURIComponent(orgId)}/switch`, {
+    method: 'POST',
+    body: {},
+    idempotent: true
+  });
+  if (!response.ok) {
+    alert('Failed to switch workspace.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload;
+  render();
+}
+
+async function handleCreateDispute(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const response = await apiJson('/api/disputes', {
+    method: 'POST',
+    body: {
+      bountyId: formData.get('bountyId'),
+      submissionId: formData.get('submissionId'),
+      verificationId: formData.get('verificationId'),
+      reason: formData.get('reason'),
+      evidenceUrl: formData.get('evidenceUrl'),
+      deadlineAt: formData.get('deadlineAt')
+    },
+    idempotent: true
+  });
+
+  if (!response.ok) {
+    alert('Failed to open dispute.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleResolveDispute(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const disputeId = String(formData.get('disputeId') || '').trim();
+  const response = await apiJson(`/api/disputes/${encodeURIComponent(disputeId)}`, {
+    method: 'PATCH',
+    body: {
+      outcome: formData.get('outcome'),
+      reviewNotes: formData.get('reviewNotes') || '',
+      resolutionNotes: formData.get('resolutionNotes') || ''
+    },
+    idempotent: true
+  });
+
+  if (!response.ok) {
+    alert('Failed to resolve dispute.');
+    return;
+  }
+
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleAdminOverrideBounty(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const bountyId = String(formData.get('bountyId') || '').trim();
+  const response = await apiJson(`/api/admin/bounties/${encodeURIComponent(bountyId)}/override`, {
+    method: 'POST',
+    body: {
+      status: formData.get('status'),
+      refundTxHash: formData.get('refundTxHash'),
+      reason: formData.get('reason')
+    },
+    idempotent: true
+  });
+  if (!response.ok) {
+    alert('Failed to apply admin override.');
+    return;
+  }
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleAdminIncidentReview(event) {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const response = await apiJson('/api/admin/incidents/review', {
+    method: 'POST',
+    body: {
+      targetType: formData.get('targetType'),
+      targetId: formData.get('targetId'),
+      decision: formData.get('decision'),
+      notes: formData.get('notes')
+    },
+    idempotent: true
+  });
+  if (!response.ok) {
+    alert('Failed to record incident review.');
+    return;
+  }
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleExportAnalytics(format) {
+  const response = await fetch(`/api/exports/analytics.${format === 'csv' ? 'csv' : 'json'}`);
+  if (!response.ok) {
+    alert('Failed to export analytics.');
+    return;
+  }
+  if (format === 'csv') {
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'bountyproof-analytics.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'bountyproof-analytics.json';
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function ensureDetailDrafts() {

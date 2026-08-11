@@ -1,0 +1,63 @@
+git<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BountyProof</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="eyebrow">AI-verified bounties on X Layer</div>
+        <h1>BountyProof</h1>
+        <p class="lede">
+          A focused MVP for posting objective bounty requirements, verifying evidence, and releasing funds when
+          every check passes.
+        </p>
+        <div class="hero-actions">
+          <button class="primary-action" data-route="dashboard">View bounty list</button>
+          <button class="secondary-action" data-route="create">Create bounty</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar">
+          <div class="panel brand-panel">
+            <div class="brand-mark">BP</div>
+            <div>
+              <strong>BountyProof</strong>
+              <p>Batch 3 workflow</p>
+            </div>
+          </div>
+
+          <nav class="panel nav-panel">
+            <button class="nav-link is-active" data-route="dashboard">Bounty list</button>
+            <button class="nav-link" data-route="create">Create bounty</button>
+            <button class="nav-link" data-route="detail">Bounty detail</button>
+            <button class="nav-link" data-route="result">Verification result</button>
+            <button class="nav-link" data-route="mine">My bounties</button>
+          </nav>
+
+          <section class="panel note-panel">
+            <h2>Batch 3 scope</h2>
+            <ul>
+              <li>Route-driven bounty screens</li>
+              <li>Requirement builder rows</li>
+              <li>Filtering and transaction history</li>
+              <li>Payout statuses through verification</li>
+            </ul>
+          </section>
+        </aside>
+
+        <section class="content">
+          <section class="grid grid-two" id="stats"></section>
+
+          <section class="panel content-panel" id="view-root"></section>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

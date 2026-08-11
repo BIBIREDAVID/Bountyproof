@@ -1,0 +1,9 @@
+{
+  "name": "bountyproof",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/requirements.test.js"
+  }
+}

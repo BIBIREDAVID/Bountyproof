@@ -1,0 +1,27 @@
+{
+  "tabType": "object",
+  "tabKeys": [
+    "id",
+    "playwright",
+    "dom_cua",
+    "cua",
+    "content",
+    "clipboard",
+    "dev",
+    "capabilities"
+  ],
+  "tabProto": [
+    "constructor",
+    "goto",
+    "markHandoff",
+    "markDeliverable",
+    "back",
+    "forward",
+    "reload",
+    "close",
+    "screenshot",
+    "title",
+    "url",
+    "getJsDialog"
+  ]
+}

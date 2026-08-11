@@ -3,7 +3,7 @@ import { requirementTypes } from './requirements.js';
 const supportedRequirementTypes = Object.keys(requirementTypes);
 
 export function renderApp(state, uiState) {
-  if (state?.loading) {
+  if (!state || state.loading) {
     renderStatsSkeleton();
     renderLoadingShell(uiState);
     syncNavigationState(uiState.view);
@@ -119,7 +119,11 @@ function renderDashboardView(state, uiState, bountyList, summary) {
   return `
     <section class="hero-grid">
       <div class="hero-copy panel-dark">
-        <span class="eyebrow">Escrowed bounty verification</span>
+        <div class="hero-kicker-row">
+          <span class="badge badge-dark">Escrowed bounty verification</span>
+          <span class="badge">SIWE + CSRF</span>
+          <span class="badge">Reviewer queues</span>
+        </div>
         <h2>Automatic payout for objective proof, not guesswork.</h2>
         <p>
           BountyProof turns a bounty into a typed checklist, verifies submission evidence, and records the verdict
@@ -128,6 +132,7 @@ function renderDashboardView(state, uiState, bountyList, summary) {
         <div class="hero-actions">
           <button class="primary-action" data-route="create">Create bounty</button>
           <button class="secondary-action" type="button" data-route="detail" data-bounty-id="${escapeHtml(summary?.bountyId || '')}">Review submission</button>
+          <button class="secondary-action" type="button" data-route="admin">Open admin</button>
         </div>
         <div class="hero-pills">
           <span class="pill pill-glow">X Layer escrow</span>
@@ -141,7 +146,9 @@ function renderDashboardView(state, uiState, bountyList, summary) {
         </div>
       </div>
       <div class="hero-panel panel-dark">
-        <div class="stack-card stack-card-main">
+        <div class="hero-orb hero-orb-left"></div>
+        <div class="hero-orb hero-orb-right"></div>
+        <div class="stack-card stack-card-main hero-stage-main">
           <div class="stack-row">
             <span class="mini-label">Active bounty</span>
             <strong>${escapeHtml(summary?.title || 'No bounty selected')}</strong>
@@ -168,8 +175,11 @@ function renderDashboardView(state, uiState, bountyList, summary) {
             </div>
           </div>
         </div>
-        <div class="stack-card stack-card-side">
-          <span class="mini-label">Transaction flow</span>
+        <div class="stack-card stack-card-side hero-stage-side">
+          <div class="stage-heading">
+            <span class="mini-label">Transaction flow</span>
+            <strong>Proof passes through a deterministic release path.</strong>
+          </div>
           <ol class="flow-list">
             <li>Poster funds the bounty escrow.</li>
             <li>Contributor submits evidence URL.</li>
@@ -284,7 +294,7 @@ function renderFilterBar(uiState) {
       <label class="field compact-field">
         <span>Status</span>
         <select data-filter="status">
-          ${['all', 'Open', 'Funded', 'Paid']
+          ${['all', 'Open', 'Funded', 'Verified', 'Paid']
             .map((status) => `<option value="${status}" ${status === (uiState.filters?.status || 'all') ? 'selected' : ''}>${status === 'all' ? 'All statuses' : status}</option>`)
             .join('')}
         </select>
@@ -340,8 +350,12 @@ function renderCreateView(state, uiState) {
 
   return `
     <section class="screen-grid screen-split">
-      <div class="screen-copy panel-dark">
-        <span class="eyebrow">Create bounty</span>
+      <div class="screen-copy panel-dark screen-copy-hero">
+        <div class="hero-kicker-row">
+          <span class="badge badge-dark">Create bounty</span>
+          <span class="badge">Typed rules</span>
+          <span class="badge">Immutable escrow</span>
+        </div>
         <h2>Build a locked checklist, not a loose brief.</h2>
         <p>Use typed requirements so the verifier can stay deterministic and the payout path stays auditable.</p>
         <div class="auth-chip">
@@ -354,6 +368,10 @@ function renderCreateView(state, uiState) {
           <div class="template-pills">
             ${supportedRequirementTypes.map((type) => `<span class="pill">${type}</span>`).join('')}
           </div>
+        </div>
+        <div class="template-box subtle-box">
+          <span class="mini-label">Build notes</span>
+          <p class="muted">Each row becomes part of the audit trail, so the brief stays strict from draft to payout.</p>
         </div>
       </div>
 
@@ -466,10 +484,14 @@ function renderDetailView(state, bounty, uiState) {
 
   return `
     <section class="screen-grid screen-split">
-      <article class="panel-dark detail-panel">
+      <article class="panel-dark detail-panel detail-hero">
         <div class="section-head compact">
           <div>
-            <span class="eyebrow">Bounty detail</span>
+            <div class="hero-kicker-row">
+              <span class="badge badge-dark">Bounty detail</span>
+              <span class="badge">Lifecycle</span>
+              <span class="badge">Audit trail</span>
+            </div>
             <h2>${escapeHtml(bounty.title)}</h2>
             <p>${escapeHtml(bounty.requirementSummary)}</p>
           </div>
@@ -650,7 +672,7 @@ function renderDetailView(state, bounty, uiState) {
             <label class="field">
               <span>Status</span>
               <select name="status">
-                ${['Open', 'Funded', 'Paid']
+                ${['Open', 'Funded', 'Verified', 'Paid']
                   .map((status) => `<option value="${status}" ${status === bounty.status ? 'selected' : ''}>${status}</option>`)
                   .join('')}
               </select>
@@ -910,7 +932,7 @@ function renderResultView(state, bounty, verification) {
         <div class="section-head compact">
           <div>
             <span class="eyebrow">Verification result</span>
-            <h2>${verification.overallPass ? 'Funds can be released.' : 'Funds remain locked.'}</h2>
+            <h2>${verification.overallPass ? 'Funds are ready for release.' : 'Funds remain locked.'}</h2>
             <p>${escapeHtml(bounty.title)} - ${escapeHtml(bounty.bountyId)}</p>
           </div>
           <span class="badge badge-dark">${verification.overallPass ? 'Pass' : 'Fail'}</span>
@@ -925,19 +947,119 @@ function renderResultView(state, bounty, verification) {
             <strong>${escapeHtml(verification.verdictHash)}</strong>
           </div>
           <div>
+            <span class="mini-label">Proof hash</span>
+            <strong>${escapeHtml(verification.chainProofHash || 'Pending')}</strong>
+          </div>
+          <div>
+            <span class="mini-label">Chain writeback</span>
+            <strong>${escapeHtml(verification.chainProofTxHash || 'Pending')}</strong>
+          </div>
+          <div>
             <span class="mini-label">Recorded</span>
             <strong>${formatDate(verification.createdAt)}</strong>
           </div>
           <div>
             <span class="mini-label">Payout</span>
-            <strong class="${verification.overallPass ? 'status-good' : 'status-bad'}">${verification.overallPass ? 'Released' : 'Locked'}</strong>
+            <strong class="${verification.overallPass ? 'status-open' : 'status-bad'}">${verification.overallPass ? 'Ready to release' : 'Locked'}</strong>
           </div>
+        </div>
+        <div class="form-actions">
+          ${verification.overallPass
+            ? `<button class="primary-action" type="button" data-release-bounty="${escapeHtml(bounty.bountyId)}">Release escrow</button>`
+            : `<button class="secondary-action" type="button" data-refund-bounty="${escapeHtml(bounty.bountyId)}">Refund escrow</button>`}
+          <button class="secondary-action" type="button" data-route="detail" data-bounty-id="${escapeHtml(bounty.bountyId)}">Back to detail</button>
+        </div>
+      </article>
+
+      <article class="panel-dark detail-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Extracted evidence</h3>
+            <p>What the verifier extracted from the submission before scoring it.</p>
+          </div>
+        </div>
+        <div class="result-proof-grid">
+          <div>
+            <span class="mini-label">Submission URL</span>
+            <strong>${escapeHtml(verification.evidenceBundle?.submissionUrl || bounty.sourceUrl || 'Not provided')}</strong>
+          </div>
+          <div>
+            <span class="mini-label">Captured at</span>
+            <strong>${formatDate(verification.evidenceBundle?.submittedAt || verification.createdAt)}</strong>
+          </div>
+          <div>
+            <span class="mini-label">Screenshots</span>
+            <strong>${escapeHtml(String(verification.evidenceSummary?.screenshotCount || verification.evidenceBundle?.screenshots?.length || 0))}</strong>
+          </div>
+          <div>
+            <span class="mini-label">Page snapshots</span>
+            <strong>${escapeHtml(String(verification.evidenceSummary?.pageSnapshotCount || verification.evidenceBundle?.pageSnapshots?.length || 0))}</strong>
+          </div>
+          <div>
+            <span class="mini-label">Metadata keys</span>
+            <strong>${escapeHtml(String(verification.evidenceSummary?.metadataKeys?.length || verification.evidenceBundle?.metadataKeys?.length || 0))}</strong>
+          </div>
+          <div>
+            <span class="mini-label">Content hash</span>
+            <strong>${escapeHtml(verification.evidenceSummary?.contentHash || 'Unavailable')}</strong>
+          </div>
+        </div>
+        <div class="result-artifact-grid">
+          <div>
+            <h4>Screenshots</h4>
+            <div class="record-list">
+              ${(verification.evidenceBundle?.screenshots || []).length
+                ? verification.evidenceBundle.screenshots.map((item) => `<div class="record-card"><div><strong>${escapeHtml(item)}</strong><p class="muted">Captured proof image</p></div></div>`).join('')
+                : '<p class="muted">No screenshots were attached.</p>'}
+            </div>
+          </div>
+          <div>
+            <h4>Page snapshots</h4>
+            <div class="record-list">
+              ${(verification.evidenceBundle?.pageSnapshots || []).length
+                ? verification.evidenceBundle.pageSnapshots.map((item) => `<div class="record-card"><div><strong>${escapeHtml(item)}</strong><p class="muted">Stored page snapshot</p></div></div>`).join('')
+                : '<p class="muted">No page snapshots were attached.</p>'}
+            </div>
+          </div>
+        </div>
+        <pre><code>${escapeHtml(JSON.stringify(verification.evidenceBundle || verification.evidenceSummary || {}, null, 2))}</code></pre>
+      </article>
+
+      <article class="panel-dark detail-panel">
+        <div class="section-head compact">
+          <div>
+          <h3>AI explanation</h3>
+            <p>Structured explanation for the verdict, confidence, and evidence bundle.</p>
+          </div>
+          <span class="badge badge-dark">${escapeHtml(String(Math.round((verification.confidenceScore || 0) * 100)))}% confidence</span>
+        </div>
+        <div class="stacked-info">
+          <div><span>Model</span><strong>${escapeHtml(verification.aiVerdict?.model || 'bounded-verifier-v1')}</strong></div>
+          <div><span>Mode</span><strong>${escapeHtml(verification.aiVerdict?.mode || 'hybrid')}</strong></div>
+          <div><span>Outcome</span><strong>${escapeHtml(verification.aiVerdict?.conclusion || (verification.overallPass ? 'pass' : 'fail'))}</strong></div>
+          <div><span>Requirements</span><strong>${escapeHtml(String(verification.aiVerdict?.summary?.totalRequirements || verification.results.length))}</strong></div>
+        </div>
+        <p class="muted">${escapeHtml(verification.reasoningSummary || verification.aiVerdict?.explanation || '')}</p>
+        <div class="record-list">
+          ${(verification.aiVerdict?.requirementFindings || verification.reasoningTrail || [])
+            .map((finding) => `
+              <div class="record-card">
+                <div>
+                  <strong>${escapeHtml(finding.label || finding.requirementId || 'Requirement')}</strong>
+                  <p>${escapeHtml(finding.reason || '')}</p>
+                  <p class="muted">${escapeHtml(finding.type || '')} - ${escapeHtml(String(Math.round((finding.confidence || 0) * 100)))}% confidence</p>
+                  ${Array.isArray(finding.evidence?.notes) ? `<p class="muted">${escapeHtml(finding.evidence.notes.join(' • '))}</p>` : ''}
+                </div>
+                <span class="${finding.pass ? 'status-good' : 'status-bad'}">${finding.pass ? 'Pass' : 'Fail'}</span>
+              </div>
+            `)
+            .join('')}
         </div>
       </article>
 
       <div class="split-grid">
         <article class="panel-dark detail-panel">
-          <h3>Per-requirement verdicts</h3>
+          <h3>Deterministic checks</h3>
           <div class="requirement-list">
             ${verification.results
               .map(
@@ -956,8 +1078,24 @@ function renderResultView(state, bounty, verification) {
         </article>
 
         <article class="panel-dark detail-panel">
-          <h3>Verification JSON</h3>
-          <pre><code>${escapeHtml(JSON.stringify(verification, null, 2))}</code></pre>
+          <div class="section-head compact">
+            <div>
+              <h3>Final verdict and payout action</h3>
+              <p>The release or refund decision recorded with proof hashes and chain writeback status.</p>
+            </div>
+          </div>
+          <div class="stacked-info">
+            <div><span>Verdict</span><strong class="${verification.overallPass ? 'status-good' : 'status-bad'}">${verification.overallPass ? 'Release approved' : 'Release blocked'}</strong></div>
+            <div><span>Payout</span><strong>${escapeHtml(bounty.payoutStatus || (verification.overallPass ? 'Ready to release' : 'Locked'))}</strong></div>
+            <div><span>Proof hash</span><strong>${escapeHtml(verification.chainProofHash || 'Pending')}</strong></div>
+            <div><span>Writeback</span><strong>${escapeHtml(verification.chainProofTxHash || 'Pending')}</strong></div>
+          </div>
+          <div class="form-actions">
+            ${verification.overallPass
+              ? `<button class="primary-action" type="button" data-release-bounty="${escapeHtml(bounty.bountyId)}">Release escrow</button>`
+              : `<button class="secondary-action" type="button" data-refund-bounty="${escapeHtml(bounty.bountyId)}">Refund escrow</button>`}
+            <button class="secondary-action" type="button" data-route="detail" data-bounty-id="${escapeHtml(bounty.bountyId)}">Back to detail</button>
+          </div>
         </article>
       </div>
 
@@ -1360,8 +1498,12 @@ function renderAdminView(state, uiState) {
 
   return `
     <section class="screen-grid screen-split">
-      <article class="panel-dark detail-panel">
-        <span class="eyebrow">Admin console</span>
+      <article class="panel-dark detail-panel admin-hero">
+        <div class="hero-kicker-row">
+          <span class="badge badge-dark">Admin console</span>
+          <span class="badge">Moderation</span>
+          <span class="badge">Incident response</span>
+        </div>
         <h2>Moderation, overrides, refunds, and incident review</h2>
         <p>Search the operational surface area and act on the most urgent records first.</p>
         <div class="stacked-info">
@@ -1369,6 +1511,10 @@ function renderAdminView(state, uiState) {
           <div><span>Disputes</span><strong>${disputes.length}</strong></div>
           <div><span>Notifications</span><strong>${notifications.length}</strong></div>
           <div><span>Audit logs</span><strong>${auditLogs.length}</strong></div>
+        </div>
+        <div class="template-box subtle-box">
+          <span class="mini-label">Operator focus</span>
+          <p class="muted">Search, override, refund, and record review decisions from one place with a searchable trail.</p>
         </div>
         <div class="section-head compact">
           <div>
@@ -1384,7 +1530,7 @@ function renderAdminView(state, uiState) {
           <label class="field">
             <span>Status</span>
             <select data-admin-filter="status">
-              ${['all', 'Open', 'Funded', 'Paid', 'Refunded', 'Disputed', 'resolved', 'open', 'escalated']
+              ${['all', 'Open', 'Funded', 'Verified', 'Paid', 'Refunded', 'Disputed', 'resolved', 'open', 'escalated']
                 .map((value) => `<option value="${value}" ${value === (filters.status || 'all') ? 'selected' : ''}>${value === 'all' ? 'All statuses' : value}</option>`)
                 .join('')}
             </select>
@@ -1429,7 +1575,7 @@ function renderAdminView(state, uiState) {
             <label class="field">
               <span>Status</span>
               <select name="status">
-                ${['Open', 'Funded', 'Paid', 'Refunded', 'Disputed']
+              ${['Open', 'Funded', 'Verified', 'Paid', 'Refunded', 'Disputed']
                   .map((value) => `<option value="${value}">${value}</option>`)
                   .join('')}
               </select>

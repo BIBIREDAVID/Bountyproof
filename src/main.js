@@ -281,6 +281,20 @@ function bindEvents() {
     };
   });
 
+  document.querySelectorAll('[data-release-bounty]').forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      await handleReleaseBounty(button.dataset.releaseBounty);
+    };
+  });
+
+  document.querySelectorAll('[data-refund-bounty]').forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      await handleRefundBounty(button.dataset.refundBounty);
+    };
+  });
+
   document.querySelectorAll('[data-form="resolve-dispute"]').forEach((form) => {
     form.onsubmit = handleResolveDispute;
   });
@@ -969,6 +983,48 @@ async function handleAdminOverrideBounty(event) {
   });
   if (!response.ok) {
     alert('Failed to apply admin override.');
+    return;
+  }
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleReleaseBounty(bountyId) {
+  if (!bountyId) {
+    return;
+  }
+  const reason = window.prompt('Optional release note', 'Verification passed and escrow is ready to release.') || '';
+  const response = await apiJson(`/api/bounties/${encodeURIComponent(bountyId)}/release`, {
+    method: 'POST',
+    body: {
+      reason
+    },
+    idempotent: true
+  });
+  if (!response.ok) {
+    alert('Failed to release escrow.');
+    return;
+  }
+  const payload = await response.json();
+  appState = payload.state;
+  render();
+}
+
+async function handleRefundBounty(bountyId) {
+  if (!bountyId) {
+    return;
+  }
+  const reason = window.prompt('Refund reason', 'Verification failed or dispute requires refund.') || '';
+  const response = await apiJson(`/api/admin/bounties/${encodeURIComponent(bountyId)}/refund`, {
+    method: 'POST',
+    body: {
+      reason
+    },
+    idempotent: true
+  });
+  if (!response.ok) {
+    alert('Failed to refund escrow.');
     return;
   }
   const payload = await response.json();

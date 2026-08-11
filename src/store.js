@@ -537,16 +537,19 @@ export async function resolveDispute(disputeId, input, authContext = null) {
   dispute.updatedAt = nowIso();
 
   if (dispute.resolutionOutcome === 'release') {
-    bounty.status = 'Paid';
-    bounty.payoutStatus = 'Released';
-    bounty.paidAt = bounty.paidAt || nowIso();
+    finalizeRelease(state, bounty, actor, {
+      payoutTxHash: bounty.payoutTxHash || createTxHash(),
+      reason: dispute.resolutionNotes || `Dispute ${dispute.disputeId} resolved in favor of the contributor`
+    });
   } else if (dispute.resolutionOutcome === 'refund') {
-    bounty.status = 'Refunded';
-    bounty.payoutStatus = 'Refunded';
-    bounty.refundedAt = nowIso();
+    finalizeRefund(state, bounty, actor, {
+      refundTxHash: bounty.refundTxHash || createTxHash(),
+      reason: dispute.resolutionNotes || `Dispute ${dispute.disputeId} resolved with refund`
+    });
   } else if (dispute.resolutionOutcome === 'reverify') {
     bounty.status = 'Funded';
     bounty.payoutStatus = 'Awaiting verification';
+    bounty.onChainStatus = 'verified';
   } else {
     bounty.payoutStatus = bounty.latestVerificationId ? 'Locked' : 'In escrow';
   }
@@ -644,55 +647,25 @@ export async function refundBounty(bountyId, input, authContext = null) {
   const actor = resolveActor(state, authContext, bounty.orgId);
   assertPermission(state, actor, 'bounty:refund', bounty.orgId);
 
-  const previous = structuredClone(bounty);
-  bounty.status = 'Refunded';
-  bounty.payoutStatus = 'Refunded';
-  bounty.refundTxHash = String(input.refundTxHash || bounty.refundTxHash || createTxHash()).trim();
-  bounty.refundedAt = nowIso();
-  bounty.refundReason = String(input.reason || '').trim();
-  bounty.updatedAt = nowIso();
-  appendBountyVersion(state, bounty, actor, 'admin_refund', {
-    previous,
-    changes: {
-      refundTxHash: bounty.refundTxHash,
-      refundReason: bounty.refundReason
-    }
-  });
-  recordAuditEvent(state, {
-    action: 'bounty.refunded',
-    entityType: 'bounty',
-    entityId: bounty.bountyId,
-    orgId: bounty.orgId,
-    bountyId: bounty.bountyId,
-    actorUserId: actor.user.userId,
-    actorHandle: actor.user.handle,
-    severity: 'warn',
-    summary: `Refund issued for ${bounty.title}`,
-    metadata: {
-      refundTxHash: bounty.refundTxHash,
-      reason: bounty.refundReason
-    }
-  });
-  recordObservabilityEvent(state, {
-    kind: 'trace',
-    source: 'admin',
-    route: `/admin/bounties/${bountyId}/refund`,
-    level: 'warn',
-    message: 'Bounty refund completed',
-    metadata: { bountyId, refundTxHash: bounty.refundTxHash }
-  });
-  dispatchNotifications(state, state.memberships.filter((membership) => membership.orgId === bounty.orgId && ['owner', 'admin', 'poster'].includes(normalizeRole(membership.role))).map((membership) => membership.userId), {
-    orgId: bounty.orgId,
-    channels: ['email', 'in-app', 'webhook'],
-    category: 'refund',
-    title: `Refund issued for ${bounty.title}`,
-    body: `The bounty was refunded with tx ${bounty.refundTxHash}.`,
-    relatedType: 'bounty',
-    relatedId: bounty.bountyId,
-    metadata: {
-      refundTxHash: bounty.refundTxHash
-    }
-  });
+  finalizeRefund(state, bounty, actor, input);
+  await saveState(state);
+  return bounty;
+}
+
+export async function releaseBounty(bountyId, input, authContext = null) {
+  const state = await loadState();
+  const bounty = state.bounties.find((item) => item.bountyId === bountyId);
+  if (!bounty) {
+    throw createError(404, 'Bounty not found');
+  }
+  const actor = resolveActor(state, authContext, bounty.orgId);
+  assertPermission(state, actor, 'bounty:fund', bounty.orgId);
+
+  if (!['Verified', 'Funded', 'Open'].includes(bounty.status) && bounty.payoutStatus !== 'Ready to release') {
+    throw createError(409, 'Bounty is not ready for release');
+  }
+
+  finalizeRelease(state, bounty, actor, input);
   await saveState(state);
   return bounty;
 }
@@ -1281,6 +1254,33 @@ export async function verifySubmission(input, authContext = null) {
       contentHash: evidenceProfile.contentHash
     }
   };
+  const aiVerdict = buildStructuredVerdict({
+    bounty,
+    submission,
+    evidenceProfile,
+    verdict
+  });
+  const proofPayload = {
+    bountyId: bounty.bountyId,
+    submissionId: submission.submissionId,
+    verificationId: verification.verificationId,
+    verdictHash: verification.verdictHash,
+    overallPass: verification.overallPass,
+    evidenceQualityScore: verification.evidenceQualityScore,
+    results: verification.results,
+    evidenceSummary: verification.evidenceSummary
+  };
+  const proofHash = createProofHash(proofPayload);
+  const proofTxHash = createTxHash();
+  verification.chainProofHash = proofHash;
+  verification.chainProofTxHash = proofTxHash;
+  verification.chainProofStatus = 'confirmed';
+  verification.chainProofRecordedAt = nowIso();
+  verification.aiVerdict = aiVerdict;
+  verification.reasoningSummary = aiVerdict.explanation;
+  verification.confidenceScore = aiVerdict.confidence;
+  verification.evidenceBundle = aiVerdict.evidenceSnapshot;
+  verification.reasoningTrail = aiVerdict.requirementFindings;
 
   state.verifications.unshift(verification);
   submission.status = verdict.overall_pass ? 'Passed' : 'Failed';
@@ -1288,12 +1288,16 @@ export async function verifySubmission(input, authContext = null) {
   bounty.updatedAt = nowIso();
   bounty.latestVerificationId = verification.verificationId;
   bounty.latestSubmissionId = submission.submissionId;
+  bounty.lastProofHash = proofHash;
+  bounty.lastProofTxHash = proofTxHash;
+  bounty.lastProofRecordedAt = verification.chainProofRecordedAt;
   if (verdict.overall_pass) {
-    bounty.status = 'Paid';
-    bounty.payoutStatus = 'Released';
-    bounty.paidAt = nowIso();
+    bounty.status = 'Verified';
+    bounty.payoutStatus = 'Ready to release';
+    bounty.onChainStatus = 'verified';
   } else if (bounty.status === 'Open') {
-    bounty.payoutStatus = 'Awaiting pass';
+    bounty.payoutStatus = 'Locked';
+    bounty.onChainStatus = 'verified';
   }
   recordAuditEvent(state, {
     action: 'submission.verified',
@@ -1307,7 +1311,29 @@ export async function verifySubmission(input, authContext = null) {
     metadata: {
       submissionId: submission.submissionId,
       overallPass: verification.overallPass,
-      verdictHash: verification.verdictHash
+      verdictHash: verification.verdictHash,
+      proofHash,
+      proofTxHash,
+      reasoningSummary: aiVerdict.explanation,
+      confidenceScore: aiVerdict.confidence,
+      evidenceBundle: aiVerdict.evidenceSnapshot,
+      reasoningTrail: aiVerdict.requirementFindings
+    }
+  });
+  recordChainEvent(state, {
+    bountyId: bounty.bountyId,
+    type: 'proof_writeback',
+    txHash: proofTxHash,
+    status: 'confirmed',
+    details: {
+      proofHash,
+      verdictHash: verification.verdictHash,
+      verificationId: verification.verificationId,
+      submissionId: submission.submissionId,
+      overallPass: verification.overallPass,
+      chainId: bounty.chainId,
+      contractAddress: bounty.contractAddress,
+      explorerBaseUrl: bounty.explorerBaseUrl
     }
   });
   dispatchNotifications(state, state.memberships.filter((membership) => membership.orgId === bounty.orgId && ['owner', 'admin', 'poster', 'reviewer'].includes(normalizeRole(membership.role))).map((membership) => membership.userId), {
@@ -1328,6 +1354,147 @@ export async function verifySubmission(input, authContext = null) {
 
   await saveState(state);
   return verification;
+}
+
+function finalizeRelease(state, bounty, actor, input = {}) {
+  const previous = structuredClone(bounty);
+  bounty.status = 'Paid';
+  bounty.payoutStatus = 'Released';
+  bounty.payoutTxHash = String(input.payoutTxHash || bounty.payoutTxHash || createTxHash()).trim();
+  bounty.releasedAt = nowIso();
+  bounty.paidAt = bounty.releasedAt;
+  bounty.releaseReason = String(input.reason || '').trim();
+  bounty.onChainStatus = 'paid';
+  bounty.chainSyncStatus = 'synced';
+  bounty.updatedAt = nowIso();
+  appendBountyVersion(state, bounty, actor, 'release', {
+    previous,
+    changes: {
+      payoutTxHash: bounty.payoutTxHash,
+      releaseReason: bounty.releaseReason
+    }
+  });
+  recordAuditEvent(state, {
+    action: 'bounty.released',
+    entityType: 'bounty',
+    entityId: bounty.bountyId,
+    orgId: bounty.orgId,
+    bountyId: bounty.bountyId,
+    actorUserId: actor.user.userId,
+    actorHandle: actor.user.handle,
+    severity: 'info',
+    summary: `Escrow released for ${bounty.title}`,
+    metadata: {
+      payoutTxHash: bounty.payoutTxHash,
+      reason: bounty.releaseReason
+    }
+  });
+  recordChainEvent(state, {
+    bountyId: bounty.bountyId,
+    type: 'escrow_release',
+    txHash: bounty.payoutTxHash,
+    status: 'confirmed',
+    details: {
+      payoutTxHash: bounty.payoutTxHash,
+      reason: bounty.releaseReason,
+      proofHash: bounty.lastProofHash || null,
+      proofTxHash: bounty.lastProofTxHash || null,
+      chainId: bounty.chainId,
+      contractAddress: bounty.contractAddress
+    }
+  });
+  recordObservabilityEvent(state, {
+    kind: 'trace',
+    source: 'escrow',
+    route: `/bounties/${bounty.bountyId}/release`,
+    level: 'info',
+    message: 'Escrow release completed',
+    metadata: { bountyId: bounty.bountyId, payoutTxHash: bounty.payoutTxHash }
+  });
+  dispatchNotifications(state, state.memberships.filter((membership) => membership.orgId === bounty.orgId && ['owner', 'admin', 'poster'].includes(normalizeRole(membership.role))).map((membership) => membership.userId), {
+    orgId: bounty.orgId,
+    channels: ['email', 'in-app', 'webhook'],
+    category: 'payout',
+    title: `Escrow released for ${bounty.title}`,
+    body: `Funds were released with tx ${bounty.payoutTxHash}.`,
+    relatedType: 'bounty',
+    relatedId: bounty.bountyId,
+    metadata: {
+      payoutTxHash: bounty.payoutTxHash,
+      proofHash: bounty.lastProofHash || null
+    }
+  });
+  return bounty;
+}
+
+function finalizeRefund(state, bounty, actor, input = {}) {
+  const previous = structuredClone(bounty);
+  bounty.status = 'Refunded';
+  bounty.payoutStatus = 'Refunded';
+  bounty.refundTxHash = String(input.refundTxHash || bounty.refundTxHash || createTxHash()).trim();
+  bounty.refundedAt = nowIso();
+  bounty.refundReason = String(input.reason || '').trim();
+  bounty.onChainStatus = 'refunded';
+  bounty.chainSyncStatus = 'synced';
+  bounty.updatedAt = nowIso();
+  appendBountyVersion(state, bounty, actor, 'refund', {
+    previous,
+    changes: {
+      refundTxHash: bounty.refundTxHash,
+      refundReason: bounty.refundReason
+    }
+  });
+  recordAuditEvent(state, {
+    action: 'bounty.refunded',
+    entityType: 'bounty',
+    entityId: bounty.bountyId,
+    orgId: bounty.orgId,
+    bountyId: bounty.bountyId,
+    actorUserId: actor.user.userId,
+    actorHandle: actor.user.handle,
+    severity: 'warn',
+    summary: `Refund issued for ${bounty.title}`,
+    metadata: {
+      refundTxHash: bounty.refundTxHash,
+      reason: bounty.refundReason
+    }
+  });
+  recordChainEvent(state, {
+    bountyId: bounty.bountyId,
+    type: 'escrow_refund',
+    txHash: bounty.refundTxHash,
+    status: 'confirmed',
+    details: {
+      refundTxHash: bounty.refundTxHash,
+      reason: bounty.refundReason,
+      proofHash: bounty.lastProofHash || null,
+      proofTxHash: bounty.lastProofTxHash || null,
+      chainId: bounty.chainId,
+      contractAddress: bounty.contractAddress
+    }
+  });
+  recordObservabilityEvent(state, {
+    kind: 'trace',
+    source: 'escrow',
+    route: `/bounties/${bounty.bountyId}/refund`,
+    level: 'warn',
+    message: 'Escrow refund completed',
+    metadata: { bountyId: bounty.bountyId, refundTxHash: bounty.refundTxHash }
+  });
+  dispatchNotifications(state, state.memberships.filter((membership) => membership.orgId === bounty.orgId && ['owner', 'admin', 'poster'].includes(normalizeRole(membership.role))).map((membership) => membership.userId), {
+    orgId: bounty.orgId,
+    channels: ['email', 'in-app', 'webhook'],
+    category: 'refund',
+    title: `Refund issued for ${bounty.title}`,
+    body: `The bounty was refunded with tx ${bounty.refundTxHash}.`,
+    relatedType: 'bounty',
+    relatedId: bounty.bountyId,
+    metadata: {
+      refundTxHash: bounty.refundTxHash,
+      proofHash: bounty.lastProofHash || null
+    }
+  });
+  return bounty;
 }
 
 export function getPublicState(state, authContext = null) {
@@ -1469,9 +1636,9 @@ export function resolveAuthContext(state, sessionId = null) {
 }
 
 export function deriveStats(state) {
-  const openBounties = state.bounties.filter((bounty) => bounty.status !== 'Paid').length;
+  const openBounties = state.bounties.filter((bounty) => !['Paid', 'Refunded', 'Verified'].includes(bounty.status)).length;
   const escrowedReward = state.bounties
-    .filter((bounty) => bounty.status !== 'Paid')
+    .filter((bounty) => !['Paid', 'Refunded', 'Verified'].includes(bounty.status))
     .reduce((sum, bounty) => sum + Number(bounty.rewardAmount || 0), 0);
   const todaysVerifications = state.verifications.filter((verification) => isSameDay(verification.createdAt, nowIso())).length;
   const passRate = state.verifications.length === 0
@@ -1508,7 +1675,7 @@ export function deriveAnalytics(state) {
       const startAt = bounty.latestVerificationId
         ? state.verifications.find((item) => item.verificationId === bounty.latestVerificationId)?.createdAt
         : null;
-      const endAt = bounty.paidAt || bounty.refundedAt || bounty.updatedAt || null;
+      const endAt = bounty.releasedAt || bounty.paidAt || bounty.refundedAt || bounty.updatedAt || null;
       if (!startAt || !endAt) {
         return null;
       }
@@ -1687,9 +1854,17 @@ export function deriveTransactionHistory(state) {
     })),
     ...state.bounties.map((bounty) => ({
       kind: 'bounty',
-      label: bounty.status === 'Paid' ? 'Payout completed' : bounty.status === 'Open' ? 'Bounty listed' : bounty.status === 'Disputed' ? 'Bounty disputed' : 'Bounty funded',
+      label: bounty.status === 'Paid'
+        ? 'Payout completed'
+        : bounty.status === 'Verified'
+          ? 'Verification ready for release'
+          : bounty.status === 'Open'
+            ? 'Bounty listed'
+            : bounty.status === 'Disputed'
+              ? 'Bounty disputed'
+              : 'Bounty funded',
       detail: `${bounty.bountyId} - ${bounty.title}`,
-      tone: bounty.status === 'Paid' ? 'good' : bounty.status === 'Open' ? 'neutral' : bounty.status === 'Disputed' ? 'warn' : 'warn',
+      tone: bounty.status === 'Paid' ? 'good' : bounty.status === 'Open' ? 'neutral' : bounty.status === 'Disputed' ? 'warn' : bounty.status === 'Verified' ? 'good' : 'warn',
       timestamp: bounty.updatedAt || bounty.createdAt,
       bountyId: bounty.bountyId
     })),
@@ -2240,6 +2415,151 @@ function extractEvidenceProfile(submission) {
   };
 }
 
+function buildEvidenceSnapshot(submission) {
+  const screenshots = normalizeEvidenceList(submission.screenshotUrls || submission.screenshot_urls);
+  const pageSnapshots = normalizeEvidenceList(submission.pageSnapshots || submission.page_snapshots);
+  const metadata = normalizeEvidenceMetadata(submission.evidenceMetadata || submission.evidence_metadata);
+  const timestamp = submission.submittedAt || submission.createdAt || nowIso();
+  return {
+    submissionUrl: String(submission.url || '').trim(),
+    submittedAt: timestamp,
+    screenshots: screenshots.slice(0, 5),
+    pageSnapshots: pageSnapshots.slice(0, 5),
+    metadata,
+    metadataKeys: Object.keys(metadata),
+    sourceHost: extractSubmissionHost(submission.url),
+    sourcePath: extractSubmissionPath(submission.url)
+  };
+}
+
+function extractSubmissionHost(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
+function extractSubmissionPath(url) {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return '';
+  }
+}
+
+function buildStructuredVerdict({ bounty, submission, evidenceProfile, verdict }) {
+  const evidenceSnapshot = buildEvidenceSnapshot(submission);
+  const requirementFindings = (verdict.results || []).map((result, index) => {
+    const requirement = bounty.requirements?.find((item) => item.id === result.req_id) || bounty.requirements?.[index] || null;
+    return {
+      requirementId: result.req_id,
+      type: requirement?.type || 'unknown',
+      label: requirement?.description || result.req_id,
+      pass: Boolean(result.pass),
+      reason: result.reason || '',
+      evidence: buildRequirementEvidence(requirement, submission, evidenceProfile, result),
+      confidence: result.pass ? 0.9 : 0.78
+    };
+  });
+
+  const supportScore = [
+    evidenceProfile.screenshotCount > 0 ? 1 : 0,
+    evidenceProfile.pageSnapshotCount > 0 ? 1 : 0,
+    evidenceProfile.metadataKeys.length > 0 ? 1 : 0,
+    evidenceProfile.contentWords > 0 ? 1 : 0
+  ].reduce((sum, value) => sum + value, 0);
+  const passScore = requirementFindings.filter((item) => item.pass).length / Math.max(1, requirementFindings.length);
+  const confidence = Math.max(0.3, Math.min(0.98, 0.25 + (supportScore * 0.12) + (passScore * 0.55)));
+
+  return {
+    model: 'bounded-verifier-v1',
+    mode: 'hybrid',
+    confidence: Number(confidence.toFixed(2)),
+    conclusion: verdict.overall_pass ? 'pass' : 'fail',
+    explanation: verdict.overall_pass
+      ? 'Deterministic requirements passed and the evidence package is sufficient for release.'
+      : 'One or more deterministic requirements failed, so release is blocked.',
+    evidenceSnapshot,
+    requirementFindings,
+    summary: {
+      totalRequirements: requirementFindings.length,
+      passedRequirements: requirementFindings.filter((item) => item.pass).length,
+      failedRequirements: requirementFindings.filter((item) => !item.pass).length,
+      evidenceCompleteness: evidenceProfile.screenshotCount + evidenceProfile.pageSnapshotCount + evidenceProfile.metadataKeys.length
+    }
+  };
+}
+
+function buildRequirementEvidence(requirement, submission, evidenceProfile, result) {
+  if (!requirement) {
+    return {
+      source: 'deterministic',
+      notes: ['No requirement metadata was available.']
+    };
+  }
+
+  if (requirement.type === 'url_exists') {
+    return {
+      source: 'submission.url',
+      notes: [
+        `URL host: ${evidenceProfile.sourceHost || 'unknown'}`,
+        `Path: ${evidenceProfile.sourcePath || 'unknown'}`
+      ],
+      url: submission.url || ''
+    };
+  }
+
+  if (requirement.type === 'text_contains') {
+    const mustInclude = requirement.params?.must_include || [];
+    const content = String(submission.content || '');
+    const matched = mustInclude.filter((token) => content.toLowerCase().includes(String(token).toLowerCase()));
+    return {
+      source: 'submission.content',
+      notes: [
+        `Matched tokens: ${matched.length ? matched.join(', ') : 'none'}`,
+        `Required tokens: ${mustInclude.join(', ')}`
+      ],
+      excerpt: content.slice(0, 280)
+    };
+  }
+
+  if (requirement.type === 'before_deadline') {
+    return {
+      source: 'submission.submittedAt',
+      notes: [
+        `Submitted at ${submission.submittedAt || 'unknown'}`,
+        `Deadline ${requirement.params?.deadline || 'unknown'}`
+      ]
+    };
+  }
+
+  if (requirement.type === 'min_length') {
+    return {
+      source: 'submission.content',
+      notes: [
+        `Measured ${measureSubmission(submission, requirement.params?.unit || 'characters')} ${requirement.params?.unit || 'characters'}`,
+        `Minimum ${Number(requirement.params?.min || 0)}`
+      ]
+    };
+  }
+
+  if (requirement.type === 'account_match') {
+    return {
+      source: 'submission.authorHandle',
+      notes: [
+        `Actual handle ${submission.authorHandle || submission.contributorHandle || 'unknown'}`,
+        `Expected handle ${requirement.params?.verified_account_handle || 'unknown'}`
+      ]
+    };
+  }
+
+  return {
+    source: 'structured-rule-engine',
+    notes: [result.reason || 'Requirement evaluated without extra evidence.']
+  };
+}
+
 function recordNotification(state, event) {
   if (!state.notifications) {
     state.notifications = [];
@@ -2287,6 +2607,24 @@ function dispatchNotifications(state, recipients, event) {
     }));
   });
   return sent;
+}
+
+function recordChainEvent(state, event) {
+  if (!state.chainEvents) {
+    state.chainEvents = [];
+  }
+  const entry = {
+    chainEventId: nextId('che', state.chainEvents),
+    bountyId: event.bountyId || '',
+    type: event.type || 'sync',
+    txHash: String(event.txHash || '').trim(),
+    status: event.status || 'pending',
+    details: event.details && typeof event.details === 'object' ? structuredClone(event.details) : {},
+    createdAt: event.createdAt || nowIso()
+  };
+  state.chainEvents.unshift(entry);
+  state.chainEvents = state.chainEvents.slice(0, 1000);
+  return entry;
 }
 
 function summarizeNotification(state, notification) {
@@ -2458,9 +2796,17 @@ function normalizeBounty(bounty, state = null) {
     fundingTxHash: bounty.fundingTxHash || bounty.funding_tx_hash || '',
     payoutTxHash: bounty.payoutTxHash || bounty.payout_tx_hash || '',
     refundTxHash: bounty.refundTxHash || bounty.refund_tx_hash || '',
+    paidAt: bounty.paidAt || bounty.paid_at || null,
     onChainStatus: bounty.onChainStatus || bounty.on_chain_status || 'draft',
     chainSyncStatus: bounty.chainSyncStatus || bounty.chain_sync_status || 'pending',
     lastChainSyncedAt: bounty.lastChainSyncedAt || bounty.last_chain_synced_at || null,
+    releasedAt: bounty.releasedAt || bounty.released_at || null,
+    refundedAt: bounty.refundedAt || bounty.refunded_at || null,
+    releaseReason: bounty.releaseReason || bounty.release_reason || '',
+    refundReason: bounty.refundReason || bounty.refund_reason || '',
+    lastProofHash: bounty.lastProofHash || bounty.last_proof_hash || '',
+    lastProofTxHash: bounty.lastProofTxHash || bounty.last_proof_tx_hash || '',
+    lastProofRecordedAt: bounty.lastProofRecordedAt || bounty.last_proof_recorded_at || null,
     createdAt: bounty.createdAt || nowIso(),
     updatedAt: bounty.updatedAt || nowIso(),
     requirements: Array.isArray(bounty.requirements) ? bounty.requirements.map(normalizeRequirement) : []
@@ -2512,7 +2858,16 @@ function normalizeVerification(verification) {
       : [],
     evidenceProfile: verification.evidenceProfile && typeof verification.evidenceProfile === 'object' ? structuredClone(verification.evidenceProfile) : null,
     evidenceQualityScore: Number(verification.evidenceQualityScore || verification.evidence_quality_score || 0),
-    evidenceSummary: verification.evidenceSummary && typeof verification.evidenceSummary === 'object' ? structuredClone(verification.evidenceSummary) : null
+    evidenceSummary: verification.evidenceSummary && typeof verification.evidenceSummary === 'object' ? structuredClone(verification.evidenceSummary) : null,
+    chainProofHash: verification.chainProofHash || verification.chain_proof_hash || '',
+    chainProofTxHash: verification.chainProofTxHash || verification.chain_proof_tx_hash || '',
+    chainProofStatus: verification.chainProofStatus || verification.chain_proof_status || 'pending',
+    chainProofRecordedAt: verification.chainProofRecordedAt || verification.chain_proof_recorded_at || null,
+    aiVerdict: verification.aiVerdict && typeof verification.aiVerdict === 'object' ? structuredClone(verification.aiVerdict) : null,
+    reasoningSummary: verification.reasoningSummary || verification.reasoning_summary || '',
+    confidenceScore: Number(verification.confidenceScore || verification.confidence_score || 0),
+    evidenceBundle: verification.evidenceBundle && typeof verification.evidenceBundle === 'object' ? structuredClone(verification.evidenceBundle) : null,
+    reasoningTrail: Array.isArray(verification.reasoningTrail) ? verification.reasoningTrail.map((item) => (item && typeof item === 'object' ? structuredClone(item) : item)) : []
   };
 }
 
@@ -2730,6 +3085,10 @@ function createVerdictHash(verdict) {
   return `0x${Buffer.from(JSON.stringify(verdict)).toString('hex').slice(0, 12)}`;
 }
 
+function createProofHash(payload) {
+  return `0x${createHash('sha256').update(JSON.stringify(payload || {})).digest('hex').slice(0, 32)}`;
+}
+
 function createToken(prefix) {
   return `${prefix}_${randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
@@ -2818,7 +3177,7 @@ function normalizeDisputeOutcome(value) {
 
 function normalizeAdminBountyStatus(value) {
   const status = String(value || '').trim();
-  if (['Open', 'Funded', 'Paid', 'Refunded', 'Disputed'].includes(status)) {
+  if (['Open', 'Funded', 'Verified', 'Paid', 'Refunded', 'Disputed'].includes(status)) {
     return status;
   }
   return 'Open';

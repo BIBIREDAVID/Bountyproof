@@ -11,6 +11,8 @@ import {
   loginWithWallet,
   resolveAuthContext,
   resolveDispute,
+  releaseBounty,
+  refundBounty,
   saveState,
   switchActiveOrg,
   verifySubmission,
@@ -154,6 +156,75 @@ async function run() {
     const liveState = await loadState();
     assert.ok(liveState.notifications.some((notification) => notification.relatedId === submission.submissionId));
     assert.ok(liveState.auditLogs.some((log) => log.entityId === submission.submissionId || log.entityId === dispute.disputeId));
+
+    const releaseBountyRecord = await createBounty({
+      title: 'Release smoke bounty',
+      rewardAmount: 30,
+      rewardToken: 'USDC',
+      deadline: '2026-08-31T23:59:00Z',
+      ownerHandle: '@bounty_lead',
+      requirementSummary: 'Release flow smoke test',
+      orgId: 'org_0001',
+      requirements: [
+        {
+          id: 'req_release_1',
+          type: 'url_exists',
+          description: 'Must include a valid URL',
+          params: { domain_allowlist: ['x.com'] }
+        }
+      ]
+    }, ownerAuth);
+
+    const releaseSubmission = await createSubmission({
+      bountyId: releaseBountyRecord.bountyId,
+      contributorHandle: '@bounty_lead',
+      url: 'https://x.com/demo/status/2',
+      submittedAt: '2026-08-11T11:00:00Z',
+      tweetCount: 1,
+      content: 'Release proof content.',
+      screenshotUrls: ['https://cdn.example.com/screens/release.png'],
+      pageSnapshots: ['{"url":"https://x.com/demo/status/2","title":"Release proof"}'],
+      evidenceMetadata: { source: 'browser', capturedBy: 'release test' }
+    }, ownerAuth);
+
+    const releaseVerification = await verifySubmission({
+      bountyId: releaseBountyRecord.bountyId,
+      submissionId: releaseSubmission.submissionId
+    }, ownerAuth);
+    assert.ok(releaseVerification.chainProofHash);
+    assert.ok(releaseVerification.aiVerdict);
+    assert.ok(releaseVerification.reasoningSummary);
+    assert.ok(releaseVerification.confidenceScore > 0);
+    assert.ok(Array.isArray(releaseVerification.reasoningTrail));
+    assert.ok(releaseVerification.reasoningTrail.length > 0);
+
+    const released = await releaseBounty(releaseBountyRecord.bountyId, {
+      reason: 'Release smoke test'
+    }, ownerAuth);
+    assert.equal(released.status, 'Paid');
+    assert.equal(released.payoutStatus, 'Released');
+
+    const refundBountyRecord = await createBounty({
+      title: 'Refund smoke bounty',
+      rewardAmount: 15,
+      rewardToken: 'USDC',
+      deadline: '2026-08-31T23:59:00Z',
+      ownerHandle: '@bounty_lead',
+      requirementSummary: 'Refund flow smoke test',
+      orgId: 'org_0001',
+      requirements: []
+    }, ownerAuth);
+
+    const refunded = await refundBounty(refundBountyRecord.bountyId, {
+      reason: 'Refund smoke test'
+    }, ownerAuth);
+    assert.equal(refunded.status, 'Refunded');
+    assert.equal(refunded.payoutStatus, 'Refunded');
+
+    const postChainState = await loadState();
+    assert.ok(postChainState.chainEvents.some((event) => event.type === 'proof_writeback' && event.bountyId === releaseBountyRecord.bountyId));
+    assert.ok(postChainState.chainEvents.some((event) => event.type === 'escrow_release' && event.bountyId === releaseBountyRecord.bountyId));
+    assert.ok(postChainState.chainEvents.some((event) => event.type === 'escrow_refund' && event.bountyId === refundBountyRecord.bountyId));
   } finally {
     await saveState(seedState);
   }

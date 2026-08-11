@@ -21,6 +21,7 @@ import {
   resolveAuthContext,
   resolveDispute,
   issueWalletChallenge,
+  releaseBounty,
   overrideBounty,
   refundBounty,
   reviewIncident,
@@ -479,6 +480,17 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && urlPath.match(/^\/api\/admin\/bounties\/[^/]+\/release$/)) {
+      const bountyId = urlPath.split('/')[4];
+      const body = await readJson(req);
+      await runProtectedMutation(req, res, `admin:bounty:release:${bountyId}`, body, async (auth) => {
+        const bounty = await releaseBounty(bountyId, body, auth);
+        const state = await loadState();
+        return { bounty, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
+      });
+      return;
+    }
+
     if (req.method === 'POST' && urlPath === '/api/admin/incidents/review') {
       const body = await readJson(req);
       await runProtectedMutation(req, res, 'admin:incident:review', body, async (auth) => {
@@ -555,6 +567,17 @@ const server = createServer(async (req, res) => {
         const dispute = await resolveDispute(disputeId, body, auth);
         const state = await loadState();
         return { dispute, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && urlPath.match(/^\/api\/bounties\/[^/]+\/release$/)) {
+      const bountyId = urlPath.split('/')[3];
+      const body = await readJson(req);
+      await runProtectedMutation(req, res, `bounty:release:${bountyId}`, body, async (auth) => {
+        const bounty = await releaseBounty(bountyId, body, auth);
+        const state = await loadState();
+        return { bounty, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
       });
       return;
     }

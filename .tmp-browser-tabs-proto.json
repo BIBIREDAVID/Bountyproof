@@ -1,0 +1,17 @@
+{
+  "tabsProps": [
+    "constructor",
+    "new",
+    "selected",
+    "list",
+    "finalize",
+    "content",
+    "get"
+  ],
+  "userProps": [
+    "constructor",
+    "openTabs",
+    "claimTab",
+    "history"
+  ]
+}

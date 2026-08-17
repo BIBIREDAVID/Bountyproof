@@ -77,3 +77,46 @@ Open `http://127.0.0.1:3000`.
 ```bash
 npm test
 ```
+
+## Deploy it
+
+For the full app, Render is the simplest fit because this project serves both static files and a stateful Node API from `server.js`.
+
+1. Push the repo to GitHub.
+2. Create a new Render Web Service from the repo.
+3. Let Render use `render.yaml`, or set:
+   - Build command: `npm install`
+   - Start command: `npm start`
+4. Add any runtime secrets in Render environment variables.
+5. Open the Render URL and the app should work end to end.
+
+If you only want the frontend on Vercel, that is possible, but the current `/api` routes and file-backed state need a separate backend or a persistence refactor first.
+
+### Render environment variables
+
+For a clean Render deploy, set only the variables you actually need at runtime:
+
+Required for the AI verifier:
+- `OPENAI_API_KEY`
+
+Optional:
+- `OPENAI_VERIFICATION_MODEL` - defaults to `gpt-5`
+- `FIREBASE_PROJECT_ID` - enables Firebase sync
+- `FIREBASE_COLLECTION` - defaults to `bountyproof_snapshots`
+- `FIREBASE_SERVICE_ACCOUNT_JSON` - alternative Firebase auth
+- `FIREBASE_CLIENT_EMAIL` - Firebase service account auth
+- `FIREBASE_PRIVATE_KEY` - Firebase service account auth
+
+Not needed for the Render web service itself:
+- `PRIVATE_KEY`
+- `DEPLOYER_PRIVATE_KEY`
+- `XLAYER_NETWORK`
+- `XLAYER_RPC_URL`
+- `CONTRACT_ADDRESS`
+- `CHAIN_SHORT_NAME`
+- `OK_ACCESS_KEY`
+- `OK_ACCESS_SECRET`
+- `OK_ACCESS_PASSPHRASE`
+- `OK_ACCESS_TIMESTAMP`
+
+Render will provide `PORT` automatically. The server now binds to `0.0.0.0`, so you do not need to set `HOST`.

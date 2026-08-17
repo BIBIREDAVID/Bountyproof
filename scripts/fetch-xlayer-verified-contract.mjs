@@ -47,7 +47,10 @@ const result = {
     chainShortName,
     contractAddress
   },
-  response: payload
+  response: payload,
+  note: Array.isArray(payload.data) && payload.data.length === 0
+    ? 'Verified on explorer, but API data is still not indexed'
+    : null
 };
 
 if (outPath) {
@@ -56,6 +59,10 @@ if (outPath) {
   console.log(resolved);
 } else {
   console.log(JSON.stringify(result, null, 2));
+}
+
+if (Array.isArray(payload.data) && payload.data.length === 0) {
+  console.warn('Verified on explorer, but API data is still not indexed');
 }
 
 function readArg(name) {

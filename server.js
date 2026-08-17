@@ -866,7 +866,7 @@ export const server = createServer(async (req, res) => {
 
 export function startServer(port = Number(process.env.PORT || 3000)) {
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => {
+    server.listen(port, process.env.HOST || '0.0.0.0', () => {
       console.log(`BountyProof running at http://127.0.0.1:${port}`);
       resolve(server);
     });

@@ -1,3 +1,4 @@
+import './load-env.js';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -6,11 +7,13 @@ import { getAddress, verifyMessage } from 'ethers';
 import { createFreshState } from './data.js';
 import { evaluateBounty } from './requirements.js';
 import { syncFirebaseSnapshot } from './firebase.js';
+import { XLAYER, getDefaultXLayerNetwork } from './xlayer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.resolve(__dirname, '..', 'data');
 const stateFile = path.join(dataDir, 'state.json');
+const openAIVerificationModel = process.env.OPENAI_VERIFICATION_MODEL || 'gpt-5';
 
 const rolePermissions = {
   owner: new Set(['org:create', 'org:invite', 'org:member-role', 'bounty:create', 'bounty:update', 'bounty:delete', 'bounty:fund', 'bounty:verify', 'bounty:refund', 'bounty:override', 'submission:create', 'session:switch-org', 'dispute:create', 'dispute:resolve']),
@@ -135,7 +138,7 @@ export async function issueWalletChallenge(input = {}) {
     nonce: randomUUID().replaceAll('-', '').slice(0, 16),
     domain: String(input.domain || 'localhost').trim(),
     uri: String(input.uri || 'http://127.0.0.1:3000').trim(),
-    chainId: Number(input.chainId || 1),
+    chainId: Number(input.chainId || getDefaultXLayerNetwork().chainId),
     issuedAt: nowIso(),
     expiresAt: new Date(Date.now() + 1000 * 60 * 10).toISOString(),
     status: 'pending'
@@ -244,7 +247,7 @@ function summarizeBountyVersion(state, version) {
 
 function buildExplorerLinks(bounty) {
   const baseUrl = String(bounty.explorerBaseUrl || '').trim().replace(/\/+$/, '');
-  const base = baseUrl || 'https://explorer.example';
+  const base = baseUrl || getDefaultXLayerNetwork().explorerBaseUrl;
   const tx = (hash) => (hash ? `${base}/tx/${hash}` : '');
   const address = (value) => (value ? `${base}/address/${value}` : '');
   return {
@@ -925,12 +928,12 @@ export async function createBounty(input, authContext = null) {
     ownerHandle: String(input.ownerHandle || actor.user.handle || '').trim(),
     requirementSummary: String(input.requirementSummary || '').trim(),
     escrowTxHash: input.escrowTxHash || createTxHash(),
-    chainId: input.chainId !== undefined ? Number(input.chainId) : Number(input.chainId || 0) || 80001,
+    chainId: input.chainId !== undefined ? Number(input.chainId) : Number(input.chainId || 0) || getDefaultXLayerNetwork().chainId,
     contractAddress: normalizeWalletAddress(input.contractAddress || '') || String(input.contractAddress || '').trim(),
-    contractVersion: String(input.contractVersion || 'v1.0.0').trim(),
-    abiVersion: String(input.abiVersion || 'abi-v1').trim(),
+    contractVersion: String(input.contractVersion || XLAYER.contract.version).trim(),
+    abiVersion: String(input.abiVersion || XLAYER.contract.abiVersion).trim(),
     contractVerified: Boolean(input.contractVerified ?? true),
-    explorerBaseUrl: String(input.explorerBaseUrl || 'https://explorer.xlayer.tech').trim(),
+    explorerBaseUrl: String(input.explorerBaseUrl || getDefaultXLayerNetwork().explorerBaseUrl).trim(),
     treasuryType: String(input.treasuryType || 'multisig').trim(),
     treasuryAddress: normalizeWalletAddress(input.treasuryAddress || '') || String(input.treasuryAddress || '').trim(),
     treasuryThreshold: Number(input.treasuryThreshold || 2),
@@ -1254,12 +1257,15 @@ export async function verifySubmission(input, authContext = null) {
       contentHash: evidenceProfile.contentHash
     }
   };
-  const aiVerdict = buildStructuredVerdict({
+  const aiVerdict = await buildStructuredVerdict({
     bounty,
     submission,
     evidenceProfile,
     verdict
   });
+  const aiRecommendation = String(aiVerdict.conclusion || '').trim().toLowerCase();
+  const overallPass = Boolean(verdict.overall_pass && aiRecommendation === 'approve');
+  verification.overallPass = overallPass;
   const proofPayload = {
     bountyId: bounty.bountyId,
     submissionId: submission.submissionId,
@@ -1281,9 +1287,10 @@ export async function verifySubmission(input, authContext = null) {
   verification.confidenceScore = aiVerdict.confidence;
   verification.evidenceBundle = aiVerdict.evidenceSnapshot;
   verification.reasoningTrail = aiVerdict.requirementFindings;
+  verification.aiDecision = aiRecommendation;
 
   state.verifications.unshift(verification);
-  submission.status = verdict.overall_pass ? 'Passed' : 'Failed';
+  submission.status = overallPass ? 'Passed' : 'Failed';
   submission.verificationId = verification.verificationId;
   bounty.updatedAt = nowIso();
   bounty.latestVerificationId = verification.verificationId;
@@ -1291,7 +1298,7 @@ export async function verifySubmission(input, authContext = null) {
   bounty.lastProofHash = proofHash;
   bounty.lastProofTxHash = proofTxHash;
   bounty.lastProofRecordedAt = verification.chainProofRecordedAt;
-  if (verdict.overall_pass) {
+  if (overallPass) {
     bounty.status = 'Verified';
     bounty.payoutStatus = 'Ready to release';
     bounty.onChainStatus = 'verified';
@@ -1314,6 +1321,7 @@ export async function verifySubmission(input, authContext = null) {
       verdictHash: verification.verdictHash,
       proofHash,
       proofTxHash,
+      aiDecision: aiRecommendation,
       reasoningSummary: aiVerdict.explanation,
       confidenceScore: aiVerdict.confidence,
       evidenceBundle: aiVerdict.evidenceSnapshot,
@@ -2448,8 +2456,22 @@ function extractSubmissionPath(url) {
   }
 }
 
-function buildStructuredVerdict({ bounty, submission, evidenceProfile, verdict }) {
+async function buildStructuredVerdict({ bounty, submission, evidenceProfile, verdict }) {
   const evidenceSnapshot = buildEvidenceSnapshot(submission);
+  const aiVerdict = await requestAIVerificationVerdict({
+    bounty,
+    submission,
+    evidenceProfile,
+    verdict,
+    evidenceSnapshot
+  }).catch(() => null);
+  if (aiVerdict) {
+    return aiVerdict;
+  }
+  return buildFallbackStructuredVerdict({ bounty, submission, evidenceProfile, verdict, evidenceSnapshot });
+}
+
+function buildFallbackStructuredVerdict({ bounty, submission, evidenceProfile, verdict, evidenceSnapshot }) {
   const requirementFindings = (verdict.results || []).map((result, index) => {
     const requirement = bounty.requirements?.find((item) => item.id === result.req_id) || bounty.requirements?.[index] || null;
     return {
@@ -2476,7 +2498,7 @@ function buildStructuredVerdict({ bounty, submission, evidenceProfile, verdict }
     model: 'bounded-verifier-v1',
     mode: 'hybrid',
     confidence: Number(confidence.toFixed(2)),
-    conclusion: verdict.overall_pass ? 'pass' : 'fail',
+    conclusion: verdict.overall_pass ? 'approve' : 'reject',
     explanation: verdict.overall_pass
       ? 'Deterministic requirements passed and the evidence package is sufficient for release.'
       : 'One or more deterministic requirements failed, so release is blocked.',
@@ -2489,6 +2511,244 @@ function buildStructuredVerdict({ bounty, submission, evidenceProfile, verdict }
       evidenceCompleteness: evidenceProfile.screenshotCount + evidenceProfile.pageSnapshotCount + evidenceProfile.metadataKeys.length
     }
   };
+}
+
+async function requestAIVerificationVerdict({ bounty, submission, evidenceProfile, verdict, evidenceSnapshot }) {
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) {
+    return null;
+  }
+
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      model: { type: 'string' },
+      mode: { type: 'string', enum: ['ai-assisted'] },
+      conclusion: { type: 'string', enum: ['approve', 'reject', 'needs_review'] },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      explanation: { type: 'string' },
+      evidenceSnapshot: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          submissionUrl: { type: 'string' },
+          submittedAt: { type: 'string' },
+          screenshots: { type: 'array', items: { type: 'string' } },
+          pageSnapshots: { type: 'array', items: { type: 'string' } },
+          metadataKeys: { type: 'array', items: { type: 'string' } },
+          sourceHost: { type: 'string' },
+          sourcePath: { type: 'string' }
+        },
+        required: ['submissionUrl', 'submittedAt', 'screenshots', 'pageSnapshots', 'metadataKeys', 'sourceHost', 'sourcePath']
+      },
+      requirementFindings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            requirementId: { type: 'string' },
+            type: { type: 'string' },
+            label: { type: 'string' },
+            pass: { type: 'boolean' },
+            reason: { type: 'string' },
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
+            evidence: { type: 'object' }
+          },
+          required: ['requirementId', 'type', 'label', 'pass', 'reason', 'confidence', 'evidence']
+        }
+      },
+      summary: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          totalRequirements: { type: 'number' },
+          passedRequirements: { type: 'number' },
+          failedRequirements: { type: 'number' },
+          evidenceCompleteness: { type: 'number' },
+          releaseRecommendation: { type: 'string', enum: ['approve', 'reject', 'needs_review'] }
+        },
+        required: ['totalRequirements', 'passedRequirements', 'failedRequirements', 'evidenceCompleteness', 'releaseRecommendation']
+      }
+    },
+    required: ['model', 'mode', 'conclusion', 'confidence', 'explanation', 'evidenceSnapshot', 'requirementFindings', 'summary']
+  };
+
+  const systemPrompt = [
+    'You are an AI-assisted bounty verifier.',
+    'Use the bounty requirements, submission content, deterministic checks, and evidence snapshot to produce a structured verification analysis.',
+    'Objective checks are already computed and authoritative for hard facts like URL, deadline, and account matching.',
+    'Your job is to interpret the natural-language requirements, inspect the evidence, explain any ambiguity, and decide whether the evidence supports release, requires review, or should be rejected.',
+    'Return only JSON that matches the provided schema.'
+  ].join(' ');
+
+  const userPrompt = {
+    bounty: {
+      bountyId: bounty.bountyId,
+      title: bounty.title,
+      requirementSummary: bounty.requirementSummary,
+      requirements: bounty.requirements
+    },
+    submission: {
+      submissionId: submission.submissionId,
+      contributorHandle: submission.contributorHandle,
+      url: submission.url,
+      submittedAt: submission.submittedAt,
+      tweetCount: submission.tweetCount,
+      content: submission.content,
+      screenshotUrls: submission.screenshotUrls,
+      pageSnapshots: submission.pageSnapshots,
+      evidenceMetadata: submission.evidenceMetadata
+    },
+    deterministicChecks: verdict.results,
+    evidenceProfile,
+    evidenceSnapshot
+  };
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: openAIVerificationModel,
+      temperature: 0.1,
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text: systemPrompt
+            }
+          ]
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: JSON.stringify(userPrompt, null, 2)
+            }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'bounty_verification_assistant',
+          strict: true,
+          schema
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw createError(response.status, `OpenAI verification request failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const rawText = extractOpenAIResponseText(payload);
+  if (!rawText) {
+    throw createError(502, 'OpenAI verification response did not include structured output');
+  }
+
+  const parsed = JSON.parse(rawText);
+  return normalizeAIVerdict(parsed, { bounty, submission, evidenceProfile, verdict, evidenceSnapshot });
+}
+
+function extractOpenAIResponseText(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+  if (!Array.isArray(payload.output)) {
+    return '';
+  }
+  const chunks = [];
+  payload.output.forEach((item) => {
+    if (!item || !Array.isArray(item.content)) {
+      return;
+    }
+    item.content.forEach((content) => {
+      if (content && content.type === 'output_text' && typeof content.text === 'string') {
+        chunks.push(content.text);
+      }
+    });
+  });
+  return chunks.join('').trim();
+}
+
+function normalizeAIVerdict(aiVerdict, fallback) {
+  const fallbackVerdict = buildFallbackStructuredVerdict(fallback);
+  if (!aiVerdict || typeof aiVerdict !== 'object') {
+    return fallbackVerdict;
+  }
+
+  const findings = Array.isArray(aiVerdict.requirementFindings) && aiVerdict.requirementFindings.length > 0
+    ? aiVerdict.requirementFindings.map((finding, index) => {
+        const fallbackFinding = fallbackVerdict.requirementFindings[index] || null;
+        return {
+          requirementId: String(finding.requirementId || fallbackFinding?.requirementId || `req_${index + 1}`),
+          type: String(finding.type || fallbackFinding?.type || 'unknown'),
+          label: String(finding.label || fallbackFinding?.label || 'Requirement'),
+          pass: Boolean(finding.pass ?? fallbackFinding?.pass ?? false),
+          reason: String(finding.reason || fallbackFinding?.reason || ''),
+          evidence: finding.evidence && typeof finding.evidence === 'object'
+            ? structuredClone(finding.evidence)
+            : fallbackFinding?.evidence || { source: 'ai-assisted' },
+          confidence: clampNumber(Number(finding.confidence ?? fallbackFinding?.confidence ?? 0.75), 0, 1)
+        };
+      })
+    : fallbackVerdict.requirementFindings;
+
+  const confidence = clampNumber(Number(aiVerdict.confidence ?? fallbackVerdict.confidence ?? 0.7), 0, 1);
+  const normalizedConclusion = normalizeAiDecision(aiVerdict.conclusion, fallbackVerdict.conclusion);
+  return {
+    model: String(aiVerdict.model || openAIVerificationModel),
+    mode: String(aiVerdict.mode || 'ai-assisted'),
+    confidence: Number(confidence.toFixed(2)),
+    conclusion: normalizedConclusion,
+    explanation: String(aiVerdict.explanation || fallbackVerdict.explanation || ''),
+    evidenceSnapshot: aiVerdict.evidenceSnapshot && typeof aiVerdict.evidenceSnapshot === 'object'
+      ? structuredClone(aiVerdict.evidenceSnapshot)
+      : fallbackVerdict.evidenceSnapshot,
+    requirementFindings: findings,
+    summary: {
+      totalRequirements: Number(aiVerdict.summary?.totalRequirements ?? fallbackVerdict.summary.totalRequirements ?? findings.length),
+      passedRequirements: Number(aiVerdict.summary?.passedRequirements ?? fallbackVerdict.summary.passedRequirements ?? findings.filter((item) => item.pass).length),
+      failedRequirements: Number(aiVerdict.summary?.failedRequirements ?? fallbackVerdict.summary.failedRequirements ?? findings.filter((item) => !item.pass).length),
+      evidenceCompleteness: Number(aiVerdict.summary?.evidenceCompleteness ?? fallbackVerdict.summary.evidenceCompleteness ?? 0),
+      releaseRecommendation: normalizeAiDecision(aiVerdict.summary?.releaseRecommendation, fallbackVerdict.conclusion)
+    },
+    source: 'openai'
+  };
+}
+
+function normalizeAiDecision(value, fallback = 'needs_review') {
+  const text = String(value || '').trim().toLowerCase();
+  if (['approve', 'reject', 'needs_review'].includes(text)) {
+    return text;
+  }
+  if (text === 'pass') {
+    return 'approve';
+  }
+  if (text === 'fail') {
+    return 'reject';
+  }
+  return String(fallback || 'needs_review').trim().toLowerCase();
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, value));
 }
 
 function buildRequirementEvidence(requirement, submission, evidenceProfile, result) {
@@ -2779,12 +3039,12 @@ function normalizeBounty(bounty, state = null) {
     ownerHandle,
     requirementSummary: bounty.requirementSummary || bounty.requirement_summary || '',
     escrowTxHash: bounty.escrowTxHash || bounty.escrow_tx_hash || createTxHash(),
-    chainId: Number(bounty.chainId || bounty.chain_id || 80001),
+    chainId: Number(bounty.chainId || bounty.chain_id || getDefaultXLayerNetwork().chainId),
     contractAddress: bounty.contractAddress || bounty.contract_address || '',
-    contractVersion: bounty.contractVersion || bounty.contract_version || 'v1.0.0',
-    abiVersion: bounty.abiVersion || bounty.abi_version || 'abi-v1',
+    contractVersion: bounty.contractVersion || bounty.contract_version || XLAYER.contract.version,
+    abiVersion: bounty.abiVersion || bounty.abi_version || XLAYER.contract.abiVersion,
     contractVerified: Boolean(bounty.contractVerified ?? bounty.contract_verified ?? true),
-    explorerBaseUrl: bounty.explorerBaseUrl || bounty.explorer_base_url || 'https://explorer.xlayer.tech',
+    explorerBaseUrl: bounty.explorerBaseUrl || bounty.explorer_base_url || getDefaultXLayerNetwork().explorerBaseUrl,
     treasuryType: bounty.treasuryType || bounty.treasury_type || 'multisig',
     treasuryAddress: bounty.treasuryAddress || bounty.treasury_address || '',
     treasuryThreshold: Number(bounty.treasuryThreshold || bounty.treasury_threshold || 2),

@@ -23,13 +23,18 @@ const uiState = {
 };
 
 let appState = null;
+let xlayerDeploymentRefreshTimer = null;
 
 await init();
 
 async function init() {
   applyTheme(uiState.theme);
   render();
-  appState = await fetchState();
+  const [state, deployment] = await Promise.all([
+    fetchState(),
+    fetchXLayerDeployment().catch(() => null)
+  ]);
+  setAppState(state, deployment);
   uiState.loading = false;
   syncRouteFromHash();
   if (!uiState.selectedBountyId) {
@@ -39,7 +44,15 @@ async function init() {
     syncRouteFromHash();
     render();
   });
+  xlayerDeploymentRefreshTimer = window.setInterval(refreshXLayerDeployment, 30000);
   render();
+}
+
+function setAppState(nextState, deploymentSnapshot = null) {
+  appState = {
+    ...nextState,
+    xlayerDeployment: deploymentSnapshot ?? nextState?.xlayerDeployment ?? appState?.xlayerDeployment ?? null
+  };
 }
 
 function render() {
@@ -53,6 +66,26 @@ async function fetchState() {
     throw new Error(`Failed to load state: ${response.status}`);
   }
   return response.json();
+}
+
+async function fetchXLayerDeployment() {
+  const response = await fetch('/api/xlayer/deployment');
+  if (!response.ok) {
+    throw new Error(`Failed to load X Layer deployment metadata: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function refreshXLayerDeployment() {
+  try {
+    const deployment = await fetchXLayerDeployment();
+    if (deployment) {
+      setAppState(appState || {}, deployment);
+      render();
+    }
+  } catch {
+    // Keep the last known deployment snapshot if the endpoint blips.
+  }
 }
 
 async function apiJson(url, { method = 'GET', body, headers = {}, idempotent = false } = {}) {
@@ -351,7 +384,7 @@ async function handleCreateBounty(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   uiState.selectedBountyId = payload.bounty.bountyId;
   uiState.requirementDrafts = createDefaultRequirementDrafts();
   navigate('detail', payload.bounty.bountyId, false);
@@ -400,7 +433,7 @@ async function handleSubmitAndVerify(event) {
   }
 
   const verificationPayload = await verificationResponse.json();
-  appState = verificationPayload.state;
+  setAppState(verificationPayload.state);
   uiState.selectedBountyId = bountyId;
   navigate('result', bountyId, false);
   render();
@@ -627,7 +660,7 @@ async function handleUpdateBounty(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   uiState.selectedBountyId = payload.bounty.bountyId;
   uiState.detailMode = 'view';
   uiState.detailDrafts = createDraftsFromBounty(payload.bounty);
@@ -671,7 +704,7 @@ async function handleSyncChain(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   uiState.selectedBountyId = payload.bounty.bountyId;
   render();
 }
@@ -697,7 +730,7 @@ async function handleDeleteBounty(bountyId) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   uiState.selectedBountyId = getDefaultBountyId();
   uiState.detailMode = 'view';
   uiState.detailDrafts = createDefaultRequirementDrafts();
@@ -725,7 +758,7 @@ async function handleEmailLogin(event) {
   }
 
   const payload = await response.json();
-  appState = payload;
+  setAppState(payload);
   uiState.selectedBountyId = getDefaultBountyId();
   navigate('account', uiState.selectedBountyId, false);
   render();
@@ -807,7 +840,7 @@ async function handleWalletLogin(event) {
   }
 
   const payload = await response.json();
-  appState = payload;
+  setAppState(payload);
   uiState.selectedBountyId = getDefaultBountyId();
   navigate('account', uiState.selectedBountyId, false);
   render();
@@ -820,7 +853,7 @@ async function handleLogout() {
     return;
   }
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   uiState.selectedBountyId = getDefaultBountyId();
   navigate('dashboard', uiState.selectedBountyId, false);
   render();
@@ -844,7 +877,7 @@ async function handleCreateOrg(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -870,7 +903,7 @@ async function handleCreateInvite(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -895,7 +928,7 @@ async function handleAcceptInvite(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -914,7 +947,7 @@ async function handleSwitchOrg(orgId) {
   }
 
   const payload = await response.json();
-  appState = payload;
+  setAppState(payload);
   render();
 }
 
@@ -940,7 +973,7 @@ async function handleCreateDispute(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -964,7 +997,7 @@ async function handleResolveDispute(event) {
   }
 
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -986,7 +1019,7 @@ async function handleAdminOverrideBounty(event) {
     return;
   }
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -1007,7 +1040,7 @@ async function handleReleaseBounty(bountyId) {
     return;
   }
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -1028,7 +1061,7 @@ async function handleRefundBounty(bountyId) {
     return;
   }
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 
@@ -1050,7 +1083,7 @@ async function handleAdminIncidentReview(event) {
     return;
   }
   const payload = await response.json();
-  appState = payload.state;
+  setAppState(payload.state);
   render();
 }
 

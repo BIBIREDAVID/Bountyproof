@@ -4,10 +4,18 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/requirements.test.js && node tests/auth.test.js"
+    "test": "node tests/requirements.test.js && node tests/auth.test.js && node tests/ai-verifier.test.js && node tests/integration.test.js",
+    "xlayer:deploy": "node scripts/deploy-xlayer-contract.mjs",
+    "xlayer:testnet:deploy": "node scripts/deploy-xlayer-contract.mjs --manifest deploy/xlayer/BountyProofTreasury.manifest.json",
+    "xlayer:deploy-and-verify": "node scripts/deploy-and-verify-xlayer.mjs",
+    "xlayer:verify": "node scripts/verify-xlayer-contract.mjs",
+    "xlayer:fetch": "node scripts/fetch-xlayer-verified-contract.mjs",
+    "ethereum:deploy": "node scripts/deploy-xlayer-contract.mjs --manifest deploy/ethereum/BountyProofTreasury.manifest.json"
   },
   "dependencies": {
     "ethers": "^6.17.0",
-    "firebase-admin": "^14.2.0"
+    "firebase-admin": "^14.2.0",
+    "openai": "^7.4.0",
+    "solc": "^0.8.36"
   }
 }

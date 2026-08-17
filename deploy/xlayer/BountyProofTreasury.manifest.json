@@ -1,0 +1,33 @@
+{
+  "chainShortName": "XLAYER",
+  "network": "testnet",
+  "chainId": 1952,
+  "rpcUrl": "https://testrpc.xlayer.tech/terigon",
+  "explorerBaseUrl": "https://www.okx.com/web3/explorer/xlayer-test",
+  "contractName": "BountyProofTreasury",
+  "contractVersion": "v1.0.0",
+  "abiVersion": "abi-1.0.0",
+  "compilerVersion": "v0.8.36+commit.8a079791",
+  "optimization": "1",
+  "optimizationRuns": "200",
+  "evmVersion": "paris",
+  "licenseType": "MIT",
+  "viaIr": false,
+  "contractAddress": "0xF7872234C059f9b1b9D9633C2A5b7cda5E0B3843",
+  "deploymentTxHash": "0xd39705a5eb134cc7427ea3b3f9b3d92cd5588c43a02617afe5d8b6f68f468cf5",
+  "constructorArgs": {
+    "admin": "0xd398A7b1a5D63fe519A61D8604d9A6B49e09080D",
+    "chainId": 1952,
+    "contractVersion": "v1.0.0"
+  },
+  "sourceFile": "contracts/BountyProofTreasury.sol",
+  "abiFile": "contracts/BountyProofTreasury.abi.json",
+  "verifiedContractInfoUrl": "https://web3.okx.com/api/v5/xlayer/contract/verify-contract-info",
+  "contractVerified": false,
+  "lastDeploymentStatus": "confirmed",
+  "lastDeploymentBlockNumber": 38541942,
+  "lastDeploymentGasUsed": "636499",
+  "lastDeployer": "0xd398A7b1a5D63fe519A61D8604d9A6B49e09080D",
+  "lastDeployedAt": "2026-08-17T21:06:20.650Z",
+  "lastDeploymentNetwork": "testnet"
+}

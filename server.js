@@ -1,7 +1,8 @@
+import './src/load-env.js';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -33,10 +34,12 @@ import {
 import { seedState } from './src/data.js';
 import { saveState } from './src/store.js';
 import { getFirebaseStatus } from './src/firebase.js';
+import { buildContractVerificationUrl, buildVerifiedContractInfoUrl, buildVerifySourceCodeUrl, XLAYER } from './src/xlayer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = __dirname;
+const isMainModule = process.argv[1] ? path.resolve(process.argv[1]) === __filename : false;
 
 const mimeTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -198,13 +201,108 @@ async function sendCurrentState(res, req) {
   sendJson(res, 200, getPublicState(state, auth));
 }
 
+async function sendXLayerDeployment(res) {
+  const deployment = await loadXLayerDeploymentSnapshot();
+  sendJson(res, 200, deployment);
+}
+
+async function loadXLayerDeploymentSnapshot() {
+  const manifest = await readXLayerManifest();
+  const sourceFile = path.resolve(root, manifest.sourceFile || 'contracts/BountyProofTreasury.sol');
+  const abiFile = path.resolve(root, manifest.abiFile || 'contracts/BountyProofTreasury.abi.json');
+  const sourceFileExists = await pathExists(sourceFile);
+  const abiFileExists = await pathExists(abiFile);
+  const contractAddress = String(manifest.contractAddress || '').trim();
+  const deploymentTxHash = String(manifest.deploymentTxHash || '').trim();
+  const contractVerified = Boolean(manifest.contractVerified ?? false);
+  const addressReady = Boolean(contractAddress);
+  const deploymentReady = Boolean(contractAddress && deploymentTxHash);
+  const verifiedArtifactsReady = Boolean(contractVerified && sourceFileExists && abiFileExists);
+  const sourceStatus = sourceFileExists ? 'present' : 'missing';
+  const abiStatus = abiFileExists ? 'present' : 'missing';
+  const verificationStatus = contractVerified
+    ? (verifiedArtifactsReady ? 'verified' : 'pending-artifacts')
+    : 'unverified';
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    manifest,
+    sourceFileExists,
+    abiFileExists,
+    status: {
+      source: sourceStatus,
+      abi: abiStatus,
+      contractVerified,
+      verification: verificationStatus,
+      addressReady,
+      deploymentReady,
+      verifiedArtifactsReady
+    },
+    links: {
+      verifiedContractInfo: buildVerifiedContractInfoUrl(contractAddress || manifest.contractAddress || '', XLAYER.chainShortName),
+      verifySourceCode: buildVerifySourceCodeUrl(),
+      contractVerification: buildContractVerificationUrl()
+    }
+  };
+}
+
+async function readXLayerManifest() {
+  const candidates = [
+    path.join(root, 'deploy', 'xlayer', 'BountyProofTreasury.manifest.json'),
+    path.join(root, 'deploy', 'xlayer', 'BountyProofTreasury.manifest.example.json')
+  ];
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      const raw = await readFile(candidate, 'utf8');
+      const manifest = JSON.parse(raw);
+      return {
+        ...manifest,
+        manifestPath: path.relative(root, candidate).replaceAll('\\', '/'),
+        verifiedContractInfoUrl: manifest.verifiedContractInfoUrl || buildVerifiedContractInfoUrl(manifest.contractAddress || '', manifest.chainShortName || XLAYER.chainShortName),
+        verifySourceCodeUrl: manifest.verifySourceCodeUrl || buildVerifySourceCodeUrl(),
+        contractVerificationUrl: manifest.contractVerificationUrl || buildContractVerificationUrl()
+      };
+    }
+  }
+
+  return {
+    chainShortName: XLAYER.chainShortName,
+    network: 'testnet',
+    chainId: XLAYER.testnet.chainId,
+    rpcUrl: XLAYER.testnet.rpcUrl,
+    explorerBaseUrl: XLAYER.testnet.explorerBaseUrl,
+    contractName: XLAYER.contract.name,
+    contractVersion: XLAYER.contract.version,
+    abiVersion: XLAYER.contract.abiVersion,
+    contractAddress: '',
+    deploymentTxHash: '',
+    sourceFile: 'contracts/BountyProofTreasury.sol',
+    abiFile: 'contracts/BountyProofTreasury.abi.json',
+    contractVerified: false,
+    manifestPath: null,
+    verifiedContractInfoUrl: buildVerifiedContractInfoUrl('', XLAYER.chainShortName),
+    verifySourceCodeUrl: buildVerifySourceCodeUrl(),
+    contractVerificationUrl: buildContractVerificationUrl()
+  };
+}
+
+async function pathExists(filePath) {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function handleError(res, error) {
   const statusCode = Number(error?.statusCode || 500);
   const message = error?.message || 'Internal server error';
   sendJson(res, statusCode, { error: message });
 }
 
-const server = createServer(async (req, res) => {
+export const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     const urlPath = decodeURIComponent(url.pathname);
@@ -221,6 +319,11 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && urlPath === '/api/auth/me') {
       await sendCurrentState(res, req);
+      return;
+    }
+
+    if (req.method === 'GET' && urlPath === '/api/xlayer/deployment') {
+      await sendXLayerDeployment(res);
       return;
     }
 
@@ -761,7 +864,15 @@ const server = createServer(async (req, res) => {
   }
 });
 
-const port = Number(process.env.PORT || 3000);
-server.listen(port, '127.0.0.1', () => {
-  console.log(`BountyProof running at http://127.0.0.1:${port}`);
-});
+export function startServer(port = Number(process.env.PORT || 3000)) {
+  return new Promise((resolve) => {
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`BountyProof running at http://127.0.0.1:${port}`);
+      resolve(server);
+    });
+  });
+}
+
+if (isMainModule) {
+  startServer();
+}

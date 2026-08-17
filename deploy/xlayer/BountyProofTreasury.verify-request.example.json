@@ -1,0 +1,15 @@
+{
+  "chainShortName": "XLAYER",
+  "contractAddress": "0x0000000000000000000000000000000000000000",
+  "contractName": "BountyProofTreasury",
+  "sourceCode": "// paste the flattened source or single-file contract here",
+  "codeFormat": "solidity-single-file",
+  "compilerVersion": "v0.8.24+commit.e11b9ed9",
+  "optimization": "1",
+  "optimizationRuns": "200",
+  "contractAbi": "[]",
+  "evmVersion": "paris",
+  "licenseType": "MIT",
+  "viaIr": false,
+  "libraryInfo": []
+}

@@ -1,4 +1,5 @@
 import { requirementTypes } from './requirements.js';
+import { XLAYER, getDefaultXLayerNetwork } from './xlayer.js';
 
 const supportedRequirementTypes = Object.keys(requirementTypes);
 
@@ -513,10 +514,11 @@ function renderDetailView(state, bounty, uiState) {
         </div>
         <div class="stacked-info chain-links">
           <div><span>Explorer</span>${renderExplorerLinks(bounty.explorerLinks)}</div>
-          <div><span>Contract version</span><strong>${escapeHtml(bounty.contractVersion || 'v1.0.0')}</strong></div>
-          <div><span>ABI version</span><strong>${escapeHtml(bounty.abiVersion || 'abi-v1')}</strong></div>
+          <div><span>Contract version</span><strong>${escapeHtml(bounty.contractVersion || XLAYER.contract.version)}</strong></div>
+          <div><span>ABI version</span><strong>${escapeHtml(bounty.abiVersion || XLAYER.contract.abiVersion)}</strong></div>
           <div><span>Chain sync</span><strong>${escapeHtml(bounty.chainSyncStatus || 'pending')}</strong></div>
         </div>
+        ${renderContractDeploymentPanel(state.xlayerDeployment, bounty)}
         <div class="split-stack">
           <section>
             <div class="section-head compact">
@@ -747,7 +749,7 @@ function renderDetailView(state, bounty, uiState) {
           <div class="field-grid">
             <label class="field">
               <span>Chain ID</span>
-              <input name="chainId" type="number" value="${Number(bounty.chainId || 80001)}" />
+              <input name="chainId" type="number" value="${Number(bounty.chainId || getDefaultXLayerNetwork().chainId)}" />
             </label>
             <label class="field">
               <span>Contract address</span>
@@ -755,15 +757,15 @@ function renderDetailView(state, bounty, uiState) {
             </label>
             <label class="field">
               <span>Contract version</span>
-              <input name="contractVersion" value="${escapeHtml(bounty.contractVersion || 'v1.0.0')}" />
+              <input name="contractVersion" value="${escapeHtml(bounty.contractVersion || XLAYER.contract.version)}" />
             </label>
             <label class="field">
               <span>ABI version</span>
-              <input name="abiVersion" value="${escapeHtml(bounty.abiVersion || 'abi-v1')}" />
+              <input name="abiVersion" value="${escapeHtml(bounty.abiVersion || XLAYER.contract.abiVersion)}" />
             </label>
             <label class="field">
               <span>Explorer base URL</span>
-              <input name="explorerBaseUrl" value="${escapeHtml(bounty.explorerBaseUrl || 'https://explorer.xlayer.tech')}" />
+              <input name="explorerBaseUrl" value="${escapeHtml(bounty.explorerBaseUrl || getDefaultXLayerNetwork().explorerBaseUrl)}" />
             </label>
             <label class="field">
               <span>Contract verified</span>
@@ -914,6 +916,67 @@ function renderDetailView(state, bounty, uiState) {
         </form>
       </div>
     </section>
+  `;
+}
+
+function renderContractDeploymentPanel(deployment, bounty) {
+  const manifest = deployment?.manifest || null;
+  const status = deployment?.status || {};
+  const links = deployment?.links || {};
+  const sourceMatches = Boolean(manifest?.sourceFile && deployment?.sourceFileExists);
+  const abiMatches = Boolean(manifest?.abiFile && deployment?.abiFileExists);
+  const addressMatches = Boolean(manifest?.contractAddress && bounty?.contractAddress && manifest.contractAddress === bounty.contractAddress);
+  const chainMatches = Boolean(Number(manifest?.chainId || 0) && Number(manifest?.chainId || 0) === Number(bounty?.chainId || 0));
+  const readiness = status.verifiedArtifactsReady
+    ? 'Ready for verified ABI/source lookup'
+    : status.contractVerified
+      ? 'Manifest loaded, waiting on artifacts'
+      : 'Manifest loaded, contract not yet verified';
+
+  return `
+    <article class="panel-dark detail-panel">
+      <div class="section-head compact">
+        <div>
+          <span class="eyebrow">Contract deployment</span>
+          <h3>Live X Layer deployment manifest</h3>
+          <p>This panel reads the deployment manifest from the server and checks ABI/source readiness.</p>
+        </div>
+        <span class="badge badge-dark">${escapeHtml(status.verification || 'unknown')}</span>
+      </div>
+      <div class="stacked-info">
+        <div><span>Manifest</span><strong>${escapeHtml(manifest?.manifestPath || 'deploy/xlayer/BountyProofTreasury.manifest.example.json')}</strong></div>
+        <div><span>Network</span><strong>${escapeHtml(`${manifest?.network || 'testnet'} · ${manifest?.chainShortName || 'XLAYER'}`)}</strong></div>
+        <div><span>Chain ID</span><strong>${escapeHtml(String(manifest?.chainId || bounty?.chainId || 'n/a'))}</strong></div>
+        <div><span>Contract</span><strong>${escapeHtml(manifest?.contractName || XLAYER.contract.name)}</strong></div>
+        <div><span>Address</span><strong>${escapeHtml(manifest?.contractAddress || bounty?.contractAddress || 'Pending')}</strong></div>
+        <div><span>Deployment tx</span><strong>${escapeHtml(manifest?.deploymentTxHash || 'Pending')}</strong></div>
+      </div>
+      <div class="stacked-info chain-links">
+        <div><span>ABI status</span><strong class="${abiMatches ? 'status-good' : 'status-bad'}">${abiMatches ? 'Available' : 'Missing'}</strong></div>
+        <div><span>Source status</span><strong class="${sourceMatches ? 'status-good' : 'status-bad'}">${sourceMatches ? 'Available' : 'Missing'}</strong></div>
+        <div><span>Address match</span><strong class="${addressMatches ? 'status-good' : 'status-bad'}">${addressMatches ? 'Matches bounty' : 'Not matched yet'}</strong></div>
+        <div><span>Chain match</span><strong class="${chainMatches ? 'status-good' : 'status-bad'}">${chainMatches ? 'Matches bounty' : 'Not matched yet'}</strong></div>
+      </div>
+      <div class="result-summary">
+        <div>
+          <span class="mini-label">Verified contract info</span>
+          <strong>${links.verifiedContractInfo ? `<a href="${escapeHtml(links.verifiedContractInfo)}" target="_blank" rel="noreferrer">Open lookup</a>` : 'Unavailable'}</strong>
+        </div>
+        <div>
+          <span class="mini-label">Verify source endpoint</span>
+          <strong>${links.verifySourceCode ? `<a href="${escapeHtml(links.verifySourceCode)}" target="_blank" rel="noreferrer">Open endpoint</a>` : 'Unavailable'}</strong>
+        </div>
+        <div>
+          <span class="mini-label">Verification result endpoint</span>
+          <strong>${links.contractVerification ? `<a href="${escapeHtml(links.contractVerification)}" target="_blank" rel="noreferrer">Open endpoint</a>` : 'Unavailable'}</strong>
+        </div>
+        <div>
+          <span class="mini-label">Readiness</span>
+          <strong class="${status.verifiedArtifactsReady ? 'status-good' : 'status-open'}">${escapeHtml(readiness)}</strong>
+        </div>
+      </div>
+      <p class="muted">Manifest fetched at ${escapeHtml(deployment?.fetchedAt || 'not yet loaded')}. ABI and source are treated as ready only when the manifest is present and both artifacts are available locally.</p>
+    </article>
   `;
 }
 

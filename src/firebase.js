@@ -1,3 +1,4 @@
+import './load-env.js';
 let cachedStatus = {
   enabled: false,
   connected: false,

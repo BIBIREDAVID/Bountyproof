@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BountyProof</title>
+    <link rel="icon" type="image/png" href="/assets/bountyproof-logo.png" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -25,13 +26,17 @@
       <main class="workspace">
         <aside class="sidebar">
           <div class="panel brand-panel">
-          <div class="brand-mark">BP</div>
-          <div>
-            <strong>BountyProof</strong>
-            <p>SIWE, CSRF, and disputes</p>
+            <img
+              class="brand-mark brand-logo"
+              src="/assets/bountyproof-logo.png"
+              alt="BountyProof logo"
+            />
+            <div>
+              <strong>BountyProof</strong>
+              <p>SIWE, CSRF, and disputes</p>
+            </div>
+            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme">Theme</button>
           </div>
-          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme">Theme</button>
-        </div>
 
           <nav class="panel nav-panel">
             <button class="nav-link is-active" data-route="dashboard">Bounty list</button>

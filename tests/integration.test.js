@@ -99,6 +99,14 @@ async function run() {
   const server = await startServer(PORT);
   try {
     await waitForServer();
+    const homeResponse = await requestJson('/', { method: 'GET' });
+    assert.equal(homeResponse.status, 200, homeResponse.text);
+    assert.match(homeResponse.text, /BountyProof/);
+
+    const spaResponse = await requestJson('/dashboard', { method: 'GET' });
+    assert.equal(spaResponse.status, 200, spaResponse.text);
+    assert.match(spaResponse.text, /BountyProof/);
+
     await requestJson('/api/reset', { method: 'POST', body: {} });
 
     const poster = await login('lead@bounties.local', {

@@ -60,6 +60,10 @@ function safeJoin(base, target) {
   return resolved;
 }
 
+function isSpaRoute(requestPath) {
+  return requestPath === '/index.html' || !path.extname(requestPath);
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -844,7 +848,35 @@ export const server = createServer(async (req, res) => {
     try {
       fileStat = await stat(filePath);
     } catch {
-      sendText(res, 404, 'Not found');
+      if (!isSpaRoute(requestPath)) {
+        sendText(res, 404, 'Not found');
+        return;
+      }
+
+      const indexPath = safeJoin(root, '/index.html');
+      if (!indexPath) {
+        sendText(res, 500, 'Unable to resolve app shell');
+        return;
+      }
+
+      try {
+        fileStat = await stat(indexPath);
+      } catch {
+        sendText(res, 404, 'Not found');
+        return;
+      }
+
+      if (fileStat.isDirectory()) {
+        sendText(res, 403, 'Directory listing disabled');
+        return;
+      }
+
+      const ext = path.extname(indexPath).toLowerCase();
+      res.writeHead(200, {
+        'Content-Type': mimeTypes.get(ext) || 'application/octet-stream',
+        'Cache-Control': 'no-store'
+      });
+      createReadStream(indexPath).pipe(res);
       return;
     }
 

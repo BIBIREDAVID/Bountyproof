@@ -35,6 +35,7 @@ import { seedState } from './src/data.js';
 import { saveState } from './src/store.js';
 import { getFirebaseStatus } from './src/firebase.js';
 import { buildContractVerificationUrl, buildVerifiedContractInfoUrl, buildVerifySourceCodeUrl, XLAYER } from './src/xlayer.js';
+import { executeTreasuryRelease, executeTreasuryRefund, resolveEscrowContractAddress, verifyFundingTransaction } from './src/escrow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -445,17 +446,38 @@ export const server = createServer(async (req, res) => {
     if (req.method === 'POST' && urlPath === '/api/bounties') {
       const body = await readJson(req);
       await runProtectedMutation(req, res, 'bounty:create', body, async (auth) => {
+        const fundingTxHash = String(body.fundingTxHash || body.escrowTxHash || '').trim();
+        if (!fundingTxHash) {
+          throw Object.assign(new Error('Funding transaction hash is required'), { statusCode: 400 });
+        }
+
+        const contractAddress = resolveEscrowContractAddress({
+          contractAddress: body.contractAddress || body.treasuryAddress || ''
+        });
+        const fundingVerification = await verifyFundingTransaction({
+          txHash: fundingTxHash,
+          contractAddress,
+          expectedChainId: Number(body.chainId || XLAYER.testnet.chainId),
+          expectedBountyId: body.bountyId || '',
+          expectedTokenAddress: body.rewardTokenAddress || '',
+          expectedAmountRaw: body.fundingAmountRaw || '',
+          expectedParticipantCount: body.participantCount || ''
+        });
+
         const bounty = await createBounty(
           {
+            bountyId: body.bountyId,
             title: body.title || '',
             rewardAmount: body.rewardAmount || 0,
+            participantCount: body.participantCount || 0,
             rewardToken: body.rewardToken || 'USDC',
+            rewardTokenAddress: body.rewardTokenAddress || '',
             deadline: body.deadline || '',
             ownerHandle: body.ownerHandle || auth.currentPosterHandle || '@okx',
             requirementSummary: body.requirementSummary || '',
-            escrowTxHash: body.escrowTxHash,
-            chainId: body.chainId,
-            contractAddress: body.contractAddress,
+            escrowTxHash: fundingVerification.receipt.hash || fundingVerification.receipt.transactionHash || fundingTxHash,
+            chainId: body.chainId || fundingVerification.network.chainId,
+            contractAddress: contractAddress || body.contractAddress,
             contractVersion: body.contractVersion,
             abiVersion: body.abiVersion,
             contractVerified: body.contractVerified,
@@ -464,11 +486,11 @@ export const server = createServer(async (req, res) => {
             treasuryAddress: body.treasuryAddress,
             treasuryThreshold: body.treasuryThreshold,
             treasurySigners: body.treasurySigners,
-            fundingTxHash: body.fundingTxHash,
+            fundingTxHash: fundingVerification.receipt.hash || fundingVerification.receipt.transactionHash || fundingTxHash,
             payoutTxHash: body.payoutTxHash,
             refundTxHash: body.refundTxHash,
-            onChainStatus: body.onChainStatus,
-            chainSyncStatus: body.chainSyncStatus,
+            onChainStatus: 'funded',
+            chainSyncStatus: 'synced',
             lastChainSyncedAt: body.lastChainSyncedAt,
             requirements: Array.isArray(body.requirements) ? body.requirements : [],
             orgId: body.orgId || auth.activeOrg?.orgId || null
@@ -491,6 +513,8 @@ export const server = createServer(async (req, res) => {
             title: body.title,
             rewardAmount: body.rewardAmount,
             rewardToken: body.rewardToken,
+            rewardTokenAddress: body.rewardTokenAddress,
+            participantCount: body.participantCount,
             deadline: body.deadline,
             ownerHandle: body.ownerHandle,
             requirementSummary: body.requirementSummary,
@@ -580,9 +604,19 @@ export const server = createServer(async (req, res) => {
       const bountyId = urlPath.split('/')[4];
       const body = await readJson(req);
       await runProtectedMutation(req, res, `admin:bounty:refund:${bountyId}`, body, async (auth) => {
-        const bounty = await refundBounty(bountyId, body, auth);
+        const stateBefore = await loadState();
+        const bounty = stateBefore.bounties.find((item) => item.bountyId === bountyId);
+        if (!bounty) {
+          throw Object.assign(new Error('Bounty not found'), { statusCode: 404 });
+        }
+        const treasuryTx = await executeTreasuryRefund({
+          contractAddress: bounty.contractAddress || body.contractAddress || resolveEscrowContractAddress(),
+          bountyId,
+          reason: body.reason || ''
+        });
+        const bountyRecord = await refundBounty(bountyId, { ...body, refundTxHash: treasuryTx.txHash }, auth);
         const state = await loadState();
-        return { bounty, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
+        return { bounty: bountyRecord, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
       });
       return;
     }
@@ -591,9 +625,19 @@ export const server = createServer(async (req, res) => {
       const bountyId = urlPath.split('/')[4];
       const body = await readJson(req);
       await runProtectedMutation(req, res, `admin:bounty:release:${bountyId}`, body, async (auth) => {
-        const bounty = await releaseBounty(bountyId, body, auth);
+        const stateBefore = await loadState();
+        const bounty = stateBefore.bounties.find((item) => item.bountyId === bountyId);
+        if (!bounty) {
+          throw Object.assign(new Error('Bounty not found'), { statusCode: 404 });
+        }
+        const treasuryTx = await executeTreasuryRelease({
+          contractAddress: bounty.contractAddress || body.contractAddress || resolveEscrowContractAddress(),
+          bountyId,
+          reason: body.reason || ''
+        });
+        const bountyRecord = await releaseBounty(bountyId, { ...body, payoutTxHash: treasuryTx.txHash }, auth);
         const state = await loadState();
-        return { bounty, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
+        return { bounty: bountyRecord, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
       });
       return;
     }
@@ -682,9 +726,19 @@ export const server = createServer(async (req, res) => {
       const bountyId = urlPath.split('/')[3];
       const body = await readJson(req);
       await runProtectedMutation(req, res, `bounty:release:${bountyId}`, body, async (auth) => {
-        const bounty = await releaseBounty(bountyId, body, auth);
+        const stateBefore = await loadState();
+        const bounty = stateBefore.bounties.find((item) => item.bountyId === bountyId);
+        if (!bounty) {
+          throw Object.assign(new Error('Bounty not found'), { statusCode: 404 });
+        }
+        const treasuryTx = await executeTreasuryRelease({
+          contractAddress: bounty.contractAddress || body.contractAddress || resolveEscrowContractAddress(),
+          bountyId,
+          reason: body.reason || ''
+        });
+        const bountyRecord = await releaseBounty(bountyId, { ...body, payoutTxHash: treasuryTx.txHash }, auth);
         const state = await loadState();
-        return { bounty, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
+        return { bounty: bountyRecord, state: getPublicState(state, resolveAuthContext(state, auth.sessionId)) };
       });
       return;
     }

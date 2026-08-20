@@ -915,14 +915,21 @@ export async function createBounty(input, authContext = null) {
   const actor = resolveActor(state, authContext);
   const activeOrgId = String(input.orgId || actor.activeOrg?.orgId || state.currentOrgId || state.orgs[0]?.orgId || '').trim();
   assertPermission(state, actor, 'bounty:create', activeOrgId);
+  const requestedBountyId = String(input.bountyId || '').trim();
+  const bountyId = requestedBountyId || nextId('bnty', state.bounties);
+  if (requestedBountyId && state.bounties.some((item) => item.bountyId === requestedBountyId)) {
+    throw createError(409, 'Bounty already exists');
+  }
 
   const bounty = {
-    bountyId: nextId('bnty', state.bounties),
+    bountyId,
     orgId: activeOrgId,
     createdByUserId: actor.user.userId,
     title: String(input.title || '').trim(),
     rewardAmount: Number(input.rewardAmount),
     rewardToken: String(input.rewardToken || 'USDC').trim().toUpperCase() || 'USDC',
+    rewardTokenAddress: normalizeWalletAddress(input.rewardTokenAddress || '') || String(input.rewardTokenAddress || '').trim(),
+    participantCount: Number(input.participantCount || 0),
     deadline: input.deadline,
     status: 'Open',
     ownerHandle: String(input.ownerHandle || actor.user.handle || '').trim(),
@@ -1000,11 +1007,25 @@ export async function updateBounty(bountyId, input, authContext = null) {
       changes.rewardAmount = value;
     }
   }
+  if (input.participantCount !== undefined) {
+    const value = Number(input.participantCount);
+    if (Number.isFinite(value) && value !== bounty.participantCount) {
+      bounty.participantCount = value;
+      changes.participantCount = value;
+    }
+  }
   if (typeof input.rewardToken === 'string') {
     const value = input.rewardToken.trim().toUpperCase() || bounty.rewardToken;
     if (value !== bounty.rewardToken) {
       bounty.rewardToken = value;
       changes.rewardToken = value;
+    }
+  }
+  if (typeof input.rewardTokenAddress === 'string') {
+    const value = normalizeWalletAddress(input.rewardTokenAddress || '') || input.rewardTokenAddress.trim();
+    if (value !== bounty.rewardTokenAddress) {
+      bounty.rewardTokenAddress = value;
+      changes.rewardTokenAddress = value;
     }
   }
   if (typeof input.deadline === 'string' && input.deadline.trim()) {
@@ -3034,6 +3055,7 @@ function normalizeBounty(bounty, state = null) {
     title: bounty.title || 'Untitled bounty',
     rewardAmount: Number(String(bounty.rewardAmount || bounty.reward_amount || 0).replace(/[^\d.]/g, '')) || 0,
     rewardToken: bounty.rewardToken || bounty.reward_token || 'USDC',
+    rewardTokenAddress: bounty.rewardTokenAddress || bounty.reward_token_address || '',
     deadline: bounty.deadline || bounty.endsAt || nowIso(),
     status: bounty.status || 'Open',
     ownerHandle,
@@ -3048,6 +3070,7 @@ function normalizeBounty(bounty, state = null) {
     treasuryType: bounty.treasuryType || bounty.treasury_type || 'multisig',
     treasuryAddress: bounty.treasuryAddress || bounty.treasury_address || '',
     treasuryThreshold: Number(bounty.treasuryThreshold || bounty.treasury_threshold || 2),
+    participantCount: Number(bounty.participantCount || bounty.participant_count || 0),
     treasurySigners: Array.isArray(bounty.treasurySigners)
       ? bounty.treasurySigners.map((signer) => String(signer || '').trim()).filter(Boolean)
       : Array.isArray(bounty.treasury_signers)

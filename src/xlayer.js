@@ -23,8 +23,26 @@ export const XLAYER = Object.freeze({
   })
 });
 
+export const XLAYER_TOKEN_ADDRESSES = Object.freeze({
+  mainnet: Object.freeze({
+    USDC: '0x74b7f16337b8972027f6196a17a631ac6de26d22',
+    'USDC.E': '0xA8CE8aee21bC2A48a5EF670afCc9274C7bbbC035'
+  }),
+  testnet: Object.freeze({
+    USDC: '',
+    'USDC.E': ''
+  })
+});
+
 export function getDefaultXLayerNetwork() {
   return XLAYER.testnet;
+}
+
+export function getDefaultXLayerTokenAddress(tokenSymbol = 'USDC', chainId = getDefaultXLayerNetwork().chainId) {
+  const normalizedSymbol = String(tokenSymbol || 'USDC').trim().toUpperCase();
+  const normalizedChainId = Number(chainId || getDefaultXLayerNetwork().chainId);
+  const network = normalizedChainId === XLAYER.mainnet.chainId ? 'mainnet' : 'testnet';
+  return XLAYER_TOKEN_ADDRESSES[network]?.[normalizedSymbol] || '';
 }
 
 export function buildVerifiedContractInfoUrl(contractAddress, chainShortName = XLAYER.chainShortName) {

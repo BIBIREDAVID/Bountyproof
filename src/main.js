@@ -1,4 +1,7 @@
 import { renderApp } from './render.js';
+import { getDefaultXLayerNetwork } from './xlayer.js';
+import { ERC20_ABI, TREASURY_ABI } from './escrow-abi.js';
+import { BrowserProvider, Contract, getAddress, parseUnits } from '/node_modules/ethers/lib.esm/index.js';
 
 const uiState = {
   view: 'dashboard',
@@ -355,6 +358,13 @@ async function handleCreateBounty(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
   syncDraftStateFromForm(event.currentTarget);
+  const bountyId = createLocalBountyId();
+  const participantCount = Number(formData.get('participantCount') || 0);
+  const rewardAmountText = String(formData.get('rewardAmount') || '0').trim();
+  const rewardTokenSymbol = String(formData.get('rewardToken') || 'USDC').trim().toUpperCase() || 'USDC';
+  const rewardTokenAddress = normalizeAddress(formData.get('rewardTokenAddress') || '');
+  const treasuryAddress = normalizeAddress(appState?.xlayerDeployment?.contractAddress || formData.get('contractAddress') || '');
+  const chainId = Number(appState?.xlayerDeployment?.chainId || getDefaultXLayerNetwork().chainId);
 
   const requirements = uiState.requirementDrafts.map((draft, index) => ({
     id: draft.id.trim() || `req_${index + 1}`,
@@ -363,32 +373,91 @@ async function handleCreateBounty(event) {
     params: parseParams(draft.params, draft.type)
   }));
 
-  const response = await apiJson('/api/bounties', {
-    method: 'POST',
-    body: {
-      orgId: appState?.auth?.activeOrg?.orgId || '',
-      title: formData.get('title'),
-      rewardAmount: Number(formData.get('rewardAmount')),
-      rewardToken: formData.get('rewardToken'),
-      deadline: formData.get('deadline'),
-      ownerHandle: formData.get('ownerHandle'),
-      requirementSummary: formData.get('requirementSummary'),
-      requirements
-    },
-    idempotent: true
-  });
-
-  if (!response.ok) {
-    alert('Failed to create bounty.');
+  if (!window.ethereum?.request) {
+    alert('A connected wallet is required to fund escrow.');
+    return;
+  }
+  if (!treasuryAddress) {
+    alert('Treasury contract address is missing.');
+    return;
+  }
+  if (!rewardTokenAddress) {
+    alert('Token contract address is required for ERC-20 approval.');
     return;
   }
 
-  const payload = await response.json();
-  setAppState(payload.state);
-  uiState.selectedBountyId = payload.bounty.bountyId;
-  uiState.requirementDrafts = createDefaultRequirementDrafts();
-  navigate('detail', payload.bounty.bountyId, false);
-  render();
+  let provider;
+  try {
+    provider = new BrowserProvider(window.ethereum);
+    await window.ethereum.request({ method: 'eth_requestAccounts' });
+    await ensureXLayerChain(window.ethereum, chainId);
+  } catch (error) {
+    alert(`Wallet connect failed: ${error.message}`);
+    return;
+  }
+
+  try {
+    const signer = await provider.getSigner();
+    const tokenContract = new Contract(rewardTokenAddress, ERC20_ABI, signer);
+    let tokenDecimals = 18;
+    try {
+      tokenDecimals = Number(await tokenContract.decimals());
+    } catch {
+      tokenDecimals = 18;
+    }
+
+    const fundingAmount = parseUnits(rewardAmountText || '0', tokenDecimals);
+    if (fundingAmount <= 0n) {
+      alert('Reward amount must be greater than zero.');
+      return;
+    }
+
+    const approveTx = await tokenContract.approve(treasuryAddress, fundingAmount);
+    await approveTx.wait();
+
+    const treasuryContract = new Contract(treasuryAddress, TREASURY_ABI, signer);
+    const fundTx = await treasuryContract.fundBounty(bountyId, rewardTokenAddress, fundingAmount, BigInt(participantCount || 0));
+    const fundReceipt = await fundTx.wait();
+    if (!fundReceipt || Number(fundReceipt.status) !== 1) {
+      throw new Error('Funding transaction failed.');
+    }
+
+    const response = await apiJson('/api/bounties', {
+      method: 'POST',
+      body: {
+        bountyId,
+        orgId: appState?.auth?.activeOrg?.orgId || '',
+        title: formData.get('title'),
+        rewardAmount: Number(formData.get('rewardAmount')),
+        rewardToken: rewardTokenSymbol,
+        rewardTokenAddress,
+        participantCount,
+        deadline: formData.get('deadline'),
+        ownerHandle: formData.get('ownerHandle'),
+        requirementSummary: formData.get('requirementSummary'),
+        fundingTxHash: fundReceipt.hash || fundReceipt.transactionHash || fundTx.hash,
+        escrowTxHash: fundReceipt.hash || fundReceipt.transactionHash || fundTx.hash,
+        fundingAmountRaw: fundingAmount.toString(),
+        contractAddress: treasuryAddress,
+        chainId,
+        requirements
+      },
+      idempotent: true
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to create bounty after funding escrow.');
+    }
+
+    const payload = await response.json();
+    setAppState(payload.state);
+    uiState.selectedBountyId = payload.bounty.bountyId;
+    uiState.requirementDrafts = createDefaultRequirementDrafts();
+    navigate('detail', payload.bounty.bountyId, false);
+    render();
+  } catch (error) {
+    alert(`Funding or bounty creation failed: ${error.message}`);
+  }
 }
 
 async function handleSubmitAndVerify(event) {
@@ -534,6 +603,36 @@ function parseParams(raw, type) {
   }
 }
 
+function createLocalBountyId() {
+  const suffix = globalThis.crypto?.randomUUID?.().replaceAll('-', '').slice(0, 10) || `${Date.now()}`;
+  return `bnty_${suffix}`;
+}
+
+function normalizeAddress(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  try {
+    return getAddress(text);
+  } catch {
+    return '';
+  }
+}
+
+async function ensureXLayerChain(ethereum, chainId) {
+  const expectedChainId = Number(chainId || getDefaultXLayerNetwork().chainId);
+  const currentChainId = Number.parseInt(String(await ethereum.request({ method: 'eth_chainId' })), 16);
+  if (currentChainId === expectedChainId) {
+    return;
+  }
+
+  await ethereum.request({
+    method: 'wallet_switchEthereumChain',
+    params: [{ chainId: `0x${expectedChainId.toString(16)}` }]
+  });
+}
+
 function syncDraftStateFromForm(form) {
   const rows = Array.from(form.querySelectorAll('[data-draft-row]'));
   uiState.requirementDrafts = rows.map((row) => ({
@@ -644,6 +743,8 @@ async function handleUpdateBounty(event) {
       title: formData.get('title'),
       rewardAmount: Number(formData.get('rewardAmount')),
       rewardToken: formData.get('rewardToken'),
+      rewardTokenAddress: formData.get('rewardTokenAddress'),
+      participantCount: Number(formData.get('participantCount') || 0),
       deadline: formData.get('deadline'),
       ownerHandle: formData.get('ownerHandle'),
       requirementSummary: formData.get('requirementSummary'),
@@ -1028,20 +1129,42 @@ async function handleReleaseBounty(bountyId) {
     return;
   }
   const reason = window.prompt('Optional release note', 'Verification passed and escrow is ready to release.') || '';
-  const response = await apiJson(`/api/bounties/${encodeURIComponent(bountyId)}/release`, {
-    method: 'POST',
-    body: {
-      reason
-    },
-    idempotent: true
-  });
-  if (!response.ok) {
-    alert('Failed to release escrow.');
+  const bounty = selectCurrentBounty();
+  const contractAddress = normalizeAddress(bounty?.contractAddress || appState?.xlayerDeployment?.contractAddress || '');
+  if (!window.ethereum?.request || !contractAddress) {
+    alert('A connected wallet and treasury contract address are required.');
     return;
   }
-  const payload = await response.json();
-  setAppState(payload.state);
-  render();
+
+  try {
+    const provider = new BrowserProvider(window.ethereum);
+    await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const signer = await provider.getSigner();
+    const treasuryContract = new Contract(contractAddress, TREASURY_ABI, signer);
+    const tx = await treasuryContract.releaseBounty(bountyId);
+    const receipt = await tx.wait();
+    if (!receipt || Number(receipt.status) !== 1) {
+      throw new Error('Release transaction failed');
+    }
+
+    const response = await apiJson(`/api/bounties/${encodeURIComponent(bountyId)}/release`, {
+      method: 'POST',
+      body: {
+        reason,
+        payoutTxHash: receipt.hash || receipt.transactionHash || tx.hash,
+        contractAddress
+      },
+      idempotent: true
+    });
+    if (!response.ok) {
+      throw new Error('Failed to release escrow.');
+    }
+    const payload = await response.json();
+    setAppState(payload.state);
+    render();
+  } catch (error) {
+    alert(`Failed to release escrow: ${error.message}`);
+  }
 }
 
 async function handleRefundBounty(bountyId) {
@@ -1049,20 +1172,42 @@ async function handleRefundBounty(bountyId) {
     return;
   }
   const reason = window.prompt('Refund reason', 'Verification failed or dispute requires refund.') || '';
-  const response = await apiJson(`/api/admin/bounties/${encodeURIComponent(bountyId)}/refund`, {
-    method: 'POST',
-    body: {
-      reason
-    },
-    idempotent: true
-  });
-  if (!response.ok) {
-    alert('Failed to refund escrow.');
+  const bounty = selectCurrentBounty();
+  const contractAddress = normalizeAddress(bounty?.contractAddress || appState?.xlayerDeployment?.contractAddress || '');
+  if (!window.ethereum?.request || !contractAddress) {
+    alert('A connected wallet and treasury contract address are required.');
     return;
   }
-  const payload = await response.json();
-  setAppState(payload.state);
-  render();
+
+  try {
+    const provider = new BrowserProvider(window.ethereum);
+    await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const signer = await provider.getSigner();
+    const treasuryContract = new Contract(contractAddress, TREASURY_ABI, signer);
+    const tx = await treasuryContract.refundBounty(bountyId);
+    const receipt = await tx.wait();
+    if (!receipt || Number(receipt.status) !== 1) {
+      throw new Error('Refund transaction failed');
+    }
+
+    const response = await apiJson(`/api/admin/bounties/${encodeURIComponent(bountyId)}/refund`, {
+      method: 'POST',
+      body: {
+        reason,
+        refundTxHash: receipt.hash || receipt.transactionHash || tx.hash,
+        contractAddress
+      },
+      idempotent: true
+    });
+    if (!response.ok) {
+      throw new Error('Failed to refund escrow.');
+    }
+    const payload = await response.json();
+    setAppState(payload.state);
+    render();
+  } catch (error) {
+    alert(`Failed to refund escrow: ${error.message}`);
+  }
 }
 
 async function handleAdminIncidentReview(event) {

@@ -185,6 +185,7 @@
       "title": "Write a Twitter thread about X Layer",
       "rewardAmount": 50,
       "rewardToken": "USDC",
+      "rewardTokenAddress": "",
       "deadline": "2026-08-20T23:59:00Z",
       "status": "Funded",
       "ownerHandle": "@okx",
@@ -199,6 +200,7 @@
       "treasuryType": "multisig",
       "treasuryAddress": "0x2222222222222222222222222222222222222222",
       "treasuryThreshold": 2,
+      "participantCount": 0,
       "treasurySigners": [
         "0x3333333333333333333333333333333333333333",
         "0x4444444444444444444444444444444444444444",
@@ -277,6 +279,7 @@
       "title": "Publish a product demo clip",
       "rewardAmount": 120,
       "rewardToken": "USDC",
+      "rewardTokenAddress": "",
       "deadline": "2026-08-14T23:59:00Z",
       "status": "Open",
       "ownerHandle": "@bounty_lead",
@@ -291,6 +294,7 @@
       "treasuryType": "multisig",
       "treasuryAddress": "0x7777777777777777777777777777777777777777",
       "treasuryThreshold": 3,
+      "participantCount": 0,
       "treasurySigners": [
         "0x8888888888888888888888888888888888888888",
         "0x9999999999999999999999999999999999999999",
@@ -359,6 +363,7 @@
       "title": "Ship a docs update for escrow flow",
       "rewardAmount": 75,
       "rewardToken": "USDC",
+      "rewardTokenAddress": "",
       "deadline": "2026-08-12T23:59:00Z",
       "status": "Paid",
       "ownerHandle": "@docs_team",
@@ -373,6 +378,7 @@
       "treasuryType": "multisig",
       "treasuryAddress": "0xcccccccccccccccccccccccccccccccccccccccc",
       "treasuryThreshold": 2,
+      "participantCount": 0,
       "treasurySigners": [
         "0xdddddddddddddddddddddddddddddddddddddddd",
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"

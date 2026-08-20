@@ -1,5 +1,5 @@
 import { requirementTypes } from './requirements.js';
-import { XLAYER, getDefaultXLayerNetwork } from './xlayer.js';
+import { XLAYER, getDefaultXLayerNetwork, getDefaultXLayerTokenAddress } from './xlayer.js';
 
 const supportedRequirementTypes = Object.keys(requirementTypes);
 
@@ -348,6 +348,8 @@ function renderBountyCard(item, selectedId) {
 function renderCreateView(state, uiState) {
   const drafts = Array.isArray(uiState.requirementDrafts) && uiState.requirementDrafts.length ? uiState.requirementDrafts : [createDraft(), createDraft({ type: 'text_contains', params: defaultParamsForType('text_contains') })];
   const activeOrg = state.auth?.activeOrg;
+  const defaultChainId = state.xlayerDeployment?.chainId || getDefaultXLayerNetwork().chainId;
+  const defaultRewardTokenAddress = getDefaultXLayerTokenAddress('USDC', defaultChainId);
 
   return `
     <section class="screen-grid screen-split">
@@ -391,6 +393,14 @@ function renderCreateView(state, uiState) {
             <input name="rewardToken" value="USDC" />
           </label>
           <label class="field">
+            <span>Token contract address</span>
+            <input name="rewardTokenAddress" placeholder="0x..." value="${escapeHtml(defaultRewardTokenAddress)}" />
+          </label>
+          <label class="field">
+            <span>Participants</span>
+            <input name="participantCount" type="number" min="1" value="30" />
+          </label>
+          <label class="field">
             <span>Deadline</span>
             <input name="deadline" value="2026-08-20T23:59:00Z" />
           </label>
@@ -402,6 +412,11 @@ function renderCreateView(state, uiState) {
             <span>Requirement summary</span>
             <input name="requirementSummary" value="URL, tags, deadline, length, account" />
           </label>
+        </div>
+        ${defaultRewardTokenAddress ? '' : '<div class="template-box subtle-box"><span class="mini-label">Testnet note</span><p class="muted">X Layer testnet does not publish an official USDC contract address in the docs, so this field stays blank until you supply a token address.</p></div>'}
+        <div class="template-box subtle-box">
+          <span class="mini-label">Funding note</span>
+          <p class="muted">Reward amount is the total escrow pot. If 30 participants split $1,000, the average payout is about $33.33 each.</p>
         </div>
 
         <div class="builder-head">
@@ -482,6 +497,7 @@ function renderDetailView(state, bounty, uiState) {
         params: JSON.stringify(requirement.params || defaultParamsForType(requirement.type), null, 2)
       }));
   const isEditMode = uiState.detailMode === 'edit';
+  const defaultRewardTokenAddress = bounty.rewardTokenAddress || getDefaultXLayerTokenAddress(bounty.rewardToken || 'USDC', bounty.chainId || getDefaultXLayerNetwork().chainId);
 
   return `
     <section class="screen-grid screen-split">
@@ -662,6 +678,14 @@ function renderDetailView(state, bounty, uiState) {
             <label class="field">
               <span>Token</span>
               <input name="rewardToken" value="${escapeHtml(bounty.rewardToken || 'USDC')}" />
+            </label>
+            <label class="field">
+              <span>Token contract address</span>
+              <input name="rewardTokenAddress" value="${escapeHtml(defaultRewardTokenAddress || '')}" />
+            </label>
+            <label class="field">
+              <span>Participants</span>
+              <input name="participantCount" type="number" min="1" value="${Number(bounty.participantCount || 0)}" />
             </label>
             <label class="field">
               <span>Deadline</span>

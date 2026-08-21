@@ -60,25 +60,18 @@ async function waitForServer() {
 }
 
 async function login(email, { displayName, handle, activeOrgId } = {}) {
-  const registration = await requestJson('/api/auth/register', {
-    method: 'POST',
-    body: {
-      email,
-      password: 'Str0ngP@ssw0rd!',
-      displayName,
-      handle
-    }
+  const registration = await registerEmailAccount({
+    email,
+    password: 'Str0ngP@ssw0rd!',
+    displayName,
+    handle
   });
-  assert.equal(registration.status, 201, `Registration failed: ${registration.text}`);
-  const verify = await requestJson('/api/auth/verify-email', {
-    method: 'POST',
-    body: {
-      email,
-      token: registration.json?.verificationToken,
-      activeOrgId
-    }
+  const verify = await verifyEmailAccount({
+    email,
+    token: registration.verificationToken,
+    activeOrgId
   });
-  assert.equal(verify.status, 200, `Verification failed: ${verify.text}`);
+  assert.ok(verify.auth?.sessionId, 'Expected a verified session');
   const response = await requestJson('/api/auth/email-login', {
     method: 'POST',
     body: {
@@ -90,6 +83,38 @@ async function login(email, { displayName, handle, activeOrgId } = {}) {
   assert.equal(response.status, 200, `Login failed: ${response.text}`);
   assert.ok(response.json?.auth?.sessionId, 'Expected a session id');
   assert.ok(response.json?.auth?.csrfToken, 'Expected a CSRF token');
+  return {
+    cookie: parseSetCookie(response.headers.get('set-cookie')),
+    auth: response.json.auth
+  };
+}
+
+async function walletLogin({ displayName, handle, activeOrgId } = {}) {
+  const wallet = new Wallet('0x59c6995e998f97a5a004497e5da9c12f4a5c7dff3b4d8f6c1f2f4b9b7a8c1d23');
+  const walletAddress = wallet.address;
+  const challengeResponse = await requestJson('/api/auth/wallet-challenge', {
+    method: 'POST',
+    body: { walletAddress }
+  });
+  assert.equal(challengeResponse.status, 201, `Wallet challenge failed: ${challengeResponse.text}`);
+  const challenge = challengeResponse.json?.challenge;
+  const signature = await wallet.signMessage(challenge.message);
+  const response = await requestJson('/api/auth/wallet-login', {
+    method: 'POST',
+    body: {
+      walletAddress,
+      displayName,
+      handle,
+      challengeId: challenge.challengeId,
+      nonce: challenge.nonce,
+      signature,
+      domain: challenge.domain,
+      uri: challenge.uri,
+      activeOrgId
+    }
+  });
+  assert.equal(response.status, 200, `Wallet login failed: ${response.text}`);
+  assert.ok(response.json?.auth?.sessionId, 'Expected a session id');
   return {
     cookie: parseSetCookie(response.headers.get('set-cookie')),
     auth: response.json.auth
@@ -189,7 +214,7 @@ async function run() {
     assert.ok(createBountyResponse.json?.bounty?.bountyId, 'Expected a bounty id');
     const bountyId = createBountyResponse.json.bounty.bountyId;
 
-    const reviewer = await login('submitter@demo.local', {
+    const reviewer = await walletLogin({
       displayName: 'Submitter',
       handle: '@submitter_handle'
     });

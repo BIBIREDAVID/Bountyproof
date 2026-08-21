@@ -7,7 +7,7 @@ const uiState = {
   selectedBountyId: null,
   detailMode: 'view',
   detailDraftBountyId: null,
-  theme: loadThemePreference(),
+  themeMode: 'system',
   loading: true,
   filters: {
     search: '',
@@ -31,7 +31,7 @@ let ethersModulePromise = null;
 await init();
 
 async function init() {
-  applyTheme(uiState.theme);
+  applyTheme(uiState.themeMode);
   render();
   const [state, deployment] = await Promise.all([
     fetchState(),
@@ -46,6 +46,12 @@ async function init() {
   window.addEventListener('hashchange', () => {
     syncRouteFromHash();
     render();
+  });
+  window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', () => {
+    if (loadThemePreference() === 'system') {
+      applyTheme('system');
+      render();
+    }
   });
   xlayerDeploymentRefreshTimer = window.setInterval(refreshXLayerDeployment, 30000);
   render();
@@ -155,23 +161,22 @@ function renderFatalError(error) {
 
 function loadThemePreference() {
   const stored = window.localStorage?.getItem('bountyproof-theme');
-  return stored === 'light' ? 'light' : 'dark';
+  if (stored === 'light' || stored === 'dark') {
+    return stored;
+  }
+  return 'system';
 }
 
 function applyTheme(theme) {
-  const nextTheme = theme === 'light' ? 'light' : 'dark';
+  const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light';
+  const nextTheme = theme === 'light' || theme === 'dark' ? theme : systemTheme;
   document.body.dataset.theme = nextTheme;
   if (nextTheme === 'light') {
     document.body.classList.add('theme-light');
   } else {
     document.body.classList.remove('theme-light');
   }
-  window.localStorage?.setItem('bountyproof-theme', nextTheme);
-  const toggle = document.querySelector('[data-theme-toggle]');
-  if (toggle) {
-    toggle.textContent = nextTheme === 'light' ? 'Dark theme' : 'Light theme';
-    toggle.setAttribute('aria-pressed', String(nextTheme === 'light'));
-  }
+  window.localStorage?.setItem('bountyproof-theme', theme === 'light' || theme === 'dark' ? theme : 'system');
 }
 
 function bindEvents() {
@@ -198,15 +203,6 @@ function bindEvents() {
       event.preventDefault();
       uiState.detailMode = button.dataset.detailMode;
       ensureDetailDrafts();
-      render();
-    };
-  });
-
-  document.querySelectorAll('[data-theme-toggle]').forEach((button) => {
-    button.onclick = (event) => {
-      event.preventDefault();
-      uiState.theme = uiState.theme === 'light' ? 'dark' : 'light';
-      applyTheme(uiState.theme);
       render();
     };
   });

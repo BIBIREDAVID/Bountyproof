@@ -12,7 +12,8 @@ import { XLAYER, getDefaultXLayerNetwork } from './xlayer.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.resolve(__dirname, '..', 'data');
-const stateFile = path.join(dataDir, 'state.json');
+const stateFile = path.resolve(process.env.BOUNTYPROOF_STATE_FILE || path.join(dataDir, 'state.json'));
+const stateDir = path.dirname(stateFile);
 const openAIVerificationModel = process.env.OPENAI_VERIFICATION_MODEL || 'gpt-5';
 
 const rolePermissions = {
@@ -34,7 +35,7 @@ export async function loadState() {
 }
 
 export async function saveState(state) {
-  await mkdir(dataDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
   const normalized = normalizeState(state);
   await persistState(normalized);
   await syncFirebaseSnapshot(normalized).catch(() => {});
@@ -1254,6 +1255,9 @@ export async function createSubmission(input, authContext = null) {
 
   const actor = resolveActor(state, authContext, bounty.orgId);
   assertPermission(state, actor, 'submission:create', bounty.orgId);
+  if (!actor?.user?.walletAddress || actor.user.authMethod !== 'wallet') {
+    throw createError(403, 'Wallet connection is required to participate in contests');
+  }
   const screenshotUrls = normalizeEvidenceList(input.screenshotUrls);
   const pageSnapshots = normalizeEvidenceList(input.pageSnapshots);
   const evidenceMetadata = normalizeEvidenceMetadata(input.evidenceMetadata || input.metadata);
@@ -2091,7 +2095,7 @@ export function getBountyHistory(state, bountyId) {
 }
 
 async function ensureStateFile() {
-  await mkdir(dataDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
   try {
     await readFile(stateFile, 'utf8');
   } catch {

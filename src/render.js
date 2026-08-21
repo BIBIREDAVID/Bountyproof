@@ -853,7 +853,7 @@ function renderDetailView(state, bounty, uiState) {
             <div>
               <span class="eyebrow">Submit evidence</span>
               <h2>Wire a live proof submission into verification.</h2>
-              <p>Submit the URL, the content snapshot, and the contributor handle that should be matched.</p>
+              <p>Wallet connection is required to participate in a contest. Submit the URL, the content snapshot, and the contributor handle that should be matched.</p>
             </div>
           </div>
           <div class="field-grid">

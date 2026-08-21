@@ -43,6 +43,26 @@ async function registerVerifyLogin(email, password, extra = {}) {
   return verifyEmailAccount({ email, token: registration.verificationToken });
 }
 
+async function walletLoginAsParticipant(address, displayName, handle) {
+  const wallet = new Wallet('0x59c6995e998f97a5a004497e5da9c12f4a5c7dff3b4d8f6c1f2f4b9b7a8c1d23');
+  const challenge = await issueWalletChallenge({
+    walletAddress: address,
+    domain: 'localhost',
+    uri: 'http://127.0.0.1:3000'
+  });
+  const signature = await wallet.signMessage(challenge.message);
+  return loginWithWallet({
+    walletAddress: address,
+    displayName,
+    handle,
+    challengeId: challenge.challengeId,
+    nonce: challenge.nonce,
+    signature,
+    domain: challenge.domain,
+    uri: challenge.uri
+  });
+}
+
 async function run() {
   await saveState(seedState);
 
@@ -124,9 +144,12 @@ async function run() {
     }, posterAuth);
     assert.equal(bounty.orgId, 'org_0001');
 
+    const participantLogin = await walletLoginAsParticipant(wallet.address, 'Wallet Operator', '@wallet_ops');
+    const participantAuth = resolveAuthContext(await loadState(), participantLogin.auth.sessionId);
+
     const submission = await createSubmission({
       bountyId: bounty.bountyId,
-      contributorHandle: '@bounty_lead',
+      contributorHandle: '@wallet_ops',
       url: 'https://x.com/demo/status/1',
       submittedAt: '2026-08-11T10:00:00Z',
       tweetCount: 1,
@@ -134,7 +157,7 @@ async function run() {
       screenshotUrls: ['https://cdn.example.com/screens/1.png'],
       pageSnapshots: ['{"url":"https://x.com/demo/status/1","title":"Demo proof"}'],
       evidenceMetadata: { source: 'browser', capturedBy: 'auth test' }
-    }, posterAuth);
+    }, participantAuth);
     assert.equal(submission.bountyId, bounty.bountyId);
     assert.ok(submission.evidenceProfile.screenshotCount >= 1);
 
@@ -184,9 +207,12 @@ async function run() {
       ]
     }, ownerAuth);
 
+    const releaseParticipantLogin = await walletLoginAsParticipant(wallet.address, 'Submitter', '@submitter_handle');
+    const releaseParticipantAuth = resolveAuthContext(await loadState(), releaseParticipantLogin.auth.sessionId);
+
     const releaseSubmission = await createSubmission({
       bountyId: releaseBountyRecord.bountyId,
-      contributorHandle: '@bounty_lead',
+      contributorHandle: '@submitter_handle',
       url: 'https://x.com/demo/status/2',
       submittedAt: '2026-08-11T11:00:00Z',
       tweetCount: 1,
@@ -194,7 +220,7 @@ async function run() {
       screenshotUrls: ['https://cdn.example.com/screens/release.png'],
       pageSnapshots: ['{"url":"https://x.com/demo/status/2","title":"Release proof"}'],
       evidenceMetadata: { source: 'browser', capturedBy: 'release test' }
-    }, ownerAuth);
+    }, releaseParticipantAuth);
 
     const releaseVerification = await verifySubmission({
       bountyId: releaseBountyRecord.bountyId,

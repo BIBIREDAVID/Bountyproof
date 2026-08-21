@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { createBounty, createSubmission, loadState, loginWithEmail, registerEmailAccount, resolveAuthContext, saveState, verifyEmailAccount, verifySubmission } from '../src/store.js';
+import { Wallet } from 'ethers';
+import { createBounty, createSubmission, issueWalletChallenge, loadState, loginWithEmail, loginWithWallet, registerEmailAccount, resolveAuthContext, saveState, verifyEmailAccount, verifySubmission } from '../src/store.js';
 import { seedState } from '../src/data.js';
 
 async function run() {
@@ -76,6 +77,24 @@ async function run() {
     const state = await loadState();
     const auth = resolveAuthContext(state, login.auth.sessionId);
 
+    const participantWallet = new Wallet('0x59c6995e998f97a5a004497e5da9c12f4a5c7dff3b4d8f6c1f2f4b9b7a8c1d23');
+    const challenge = await issueWalletChallenge({
+      walletAddress: participantWallet.address,
+      domain: 'localhost',
+      uri: 'http://127.0.0.1:3000'
+    });
+    const participantLogin = await loginWithWallet({
+      walletAddress: participantWallet.address,
+      displayName: 'Submitter',
+      handle: '@submitter_handle',
+      challengeId: challenge.challengeId,
+      nonce: challenge.nonce,
+      signature: await participantWallet.signMessage(challenge.message),
+      domain: challenge.domain,
+      uri: challenge.uri
+    });
+    const participantAuth = resolveAuthContext(await loadState(), participantLogin.auth.sessionId);
+
     const bounty = await createBounty({
       title: 'AI verifier smoke bounty',
       rewardAmount: 50,
@@ -110,7 +129,7 @@ async function run() {
       screenshotUrls: ['https://cdn.example.com/ai/screen.png'],
       pageSnapshots: ['{"url":"https://x.com/demo/status/9","title":"AI smoke proof"}'],
       evidenceMetadata: { source: 'browser', capturedBy: 'ai test' }
-    }, auth);
+    }, participantAuth);
 
     const verification = await verifySubmission({
       bountyId: bounty.bountyId,

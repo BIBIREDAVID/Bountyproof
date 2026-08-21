@@ -1,7 +1,6 @@
 import { renderApp } from './render.js';
 import { getDefaultXLayerNetwork } from './xlayer.js';
 import { ERC20_ABI, TREASURY_ABI } from './escrow-abi.js';
-import { BrowserProvider, Contract, getAddress, parseUnits } from '/node_modules/ethers/lib.esm/index.js';
 
 const uiState = {
   view: 'dashboard',
@@ -27,6 +26,7 @@ const uiState = {
 
 let appState = null;
 let xlayerDeploymentRefreshTimer = null;
+let ethersModulePromise = null;
 
 await init();
 
@@ -59,8 +59,13 @@ function setAppState(nextState, deploymentSnapshot = null) {
 }
 
 function render() {
-  renderApp(appState, uiState);
-  bindEvents();
+  try {
+    renderApp(appState, uiState);
+    bindEvents();
+  } catch (error) {
+    console.error('Render failed', error);
+    renderFatalError(error);
+  }
 }
 
 async function fetchState() {
@@ -114,6 +119,38 @@ async function apiJson(url, { method = 'GET', body, headers = {}, idempotent = f
 
 function cryptoRandomId() {
   return globalThis.crypto?.randomUUID?.() || `req_${Math.random().toString(16).slice(2)}`;
+}
+
+async function loadEthers() {
+  if (!ethersModulePromise) {
+    ethersModulePromise = import('/node_modules/ethers/lib.esm/index.js');
+  }
+  return ethersModulePromise;
+}
+
+function renderFatalError(error) {
+  const statsRoot = document.getElementById('stats');
+  const viewRoot = document.getElementById('view-root');
+  const message = error?.message || 'Unknown error';
+  if (statsRoot) {
+    statsRoot.innerHTML = '';
+  }
+  if (viewRoot) {
+    viewRoot.innerHTML = `
+      <section class="panel-dark empty-state">
+        <div class="section-head compact">
+          <div>
+            <span class="badge badge-dark">App boot error</span>
+            <h3>Something stopped the dashboard from rendering.</h3>
+            <p>${escapeHtml(message)}</p>
+          </div>
+        </div>
+        <p class="muted">
+          The shell loaded, but a runtime module failed. Open the browser console for the exact stack trace.
+        </p>
+      </section>
+    `;
+  }
 }
 
 function loadThemePreference() {
@@ -388,6 +425,7 @@ async function handleCreateBounty(event) {
 
   let provider;
   try {
+    const { BrowserProvider, Contract, parseUnits } = await loadEthers();
     provider = new BrowserProvider(window.ethereum);
     await window.ethereum.request({ method: 'eth_requestAccounts' });
     await ensureXLayerChain(window.ethereum, chainId);
@@ -614,7 +652,7 @@ function normalizeAddress(value) {
     return '';
   }
   try {
-    return getAddress(text);
+    return globalThis.ethers?.getAddress ? globalThis.ethers.getAddress(text) : text;
   } catch {
     return '';
   }
@@ -1137,6 +1175,7 @@ async function handleReleaseBounty(bountyId) {
   }
 
   try {
+    const { BrowserProvider, Contract } = await loadEthers();
     const provider = new BrowserProvider(window.ethereum);
     await window.ethereum.request({ method: 'eth_requestAccounts' });
     const signer = await provider.getSigner();
@@ -1180,6 +1219,7 @@ async function handleRefundBounty(bountyId) {
   }
 
   try {
+    const { BrowserProvider, Contract } = await loadEthers();
     const provider = new BrowserProvider(window.ethereum);
     await window.ethereum.request({ method: 'eth_requestAccounts' });
     const signer = await provider.getSigner();

@@ -1436,9 +1436,9 @@ function renderAccountView(state) {
         <form class="panel-dark glass-form" data-form="email-login">
           <div class="section-head compact">
             <div>
-              <span class="eyebrow">Email login</span>
-              <h2>Sign in with a work email</h2>
-              <p>For now this is a secure local session model that we can later replace with a real identity provider.</p>
+              <span class="eyebrow">Email auth</span>
+              <h2>Create an account, verify it, then sign in</h2>
+              <p>Password-based accounts with a one-time verification code before login. The code is shown once during registration in this demo.</p>
             </div>
           </div>
           <div class="field-grid">
@@ -1454,9 +1454,19 @@ function renderAccountView(state) {
               <span>Handle</span>
               <input name="handle" placeholder="@owner" />
             </label>
+            <label class="field">
+              <span>Password</span>
+              <input name="password" type="password" placeholder="Create a password" />
+            </label>
+            <label class="field">
+              <span>Verification code</span>
+              <input name="verificationToken" placeholder="Paste code after registration" />
+            </label>
           </div>
           <div class="form-actions">
-            <button type="submit" class="primary-action">Continue</button>
+            <button type="button" class="secondary-action" data-form-action="register">Register</button>
+            <button type="button" class="secondary-action" data-form-action="verify">Verify</button>
+            <button type="submit" class="primary-action">Login</button>
           </div>
         </form>
 

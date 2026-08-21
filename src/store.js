@@ -1,6 +1,6 @@
 import './load-env.js';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAddress, verifyMessage } from 'ethers';
@@ -42,28 +42,122 @@ export async function saveState(state) {
 }
 
 async function persistState(state) {
-  const tmpFile = `${stateFile}.tmp`;
+  const tmpFile = `${stateFile}.${randomUUID()}.tmp`;
   await writeFile(tmpFile, JSON.stringify(state, null, 2), 'utf8');
-  await unlink(stateFile).catch(() => {});
-  await rename(tmpFile, stateFile);
+  await rename(tmpFile, stateFile).catch(async () => {
+    await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8');
+    await unlink(tmpFile).catch(() => {});
+  });
+}
+
+export async function registerEmailAccount(input) {
+  const state = await loadState();
+  const email = String(input.email || '').trim().toLowerCase();
+  const password = String(input.password || '');
+  const displayName = String(input.displayName || input.handle || email.split('@')[0] || 'Email User').trim();
+  const handle = normalizeHandle(input.handle || displayName || email.split('@')[0]);
+  if (!email) {
+    throw createError(400, 'Email is required');
+  }
+  if (!password) {
+    throw createError(400, 'Password is required');
+  }
+
+  let user = state.users.find((item) => item.email && item.email.toLowerCase() === email) || null;
+  if (user?.emailVerifiedAt) {
+    throw createError(409, 'Account already exists');
+  }
+
+  const { hash, salt } = hashPassword(password);
+  const verificationToken = randomBytes(24).toString('hex');
+  const verificationTokenExpiresAt = new Date(Date.now() + 1000 * 60 * 30).toISOString();
+
+  if (!user) {
+    user = upsertUser(state, {
+      authMethod: 'email',
+      email,
+      displayName,
+      handle
+    });
+  }
+  user.passwordHash = hash;
+  user.passwordSalt = salt;
+  user.emailVerifiedAt = null;
+  user.emailVerificationToken = verificationToken;
+  user.emailVerificationTokenExpiresAt = verificationTokenExpiresAt;
+  user.updatedAt = nowIso();
+  await saveState(state);
+  return {
+    ok: true,
+    requiresVerification: true,
+    email,
+    verificationToken,
+    verificationTokenExpiresAt
+  };
+}
+
+export async function verifyEmailAccount(input) {
+  const state = await loadState();
+  const email = String(input.email || '').trim().toLowerCase();
+  const token = String(input.token || '').trim();
+  if (!email || !token) {
+    throw createError(400, 'Email and verification token are required');
+  }
+  const user = state.users.find((item) => item.email && item.email.toLowerCase() === email) || null;
+  if (!user) {
+    throw createError(404, 'Account not found');
+  }
+  if (!user.emailVerificationToken || user.emailVerificationToken !== token) {
+    throw createError(401, 'Invalid verification token');
+  }
+  if (user.emailVerificationTokenExpiresAt && Date.parse(user.emailVerificationTokenExpiresAt) < Date.now()) {
+    throw createError(410, 'Verification token expired');
+  }
+  user.emailVerifiedAt = nowIso();
+  user.emailVerificationToken = '';
+  user.emailVerificationTokenExpiresAt = null;
+  user.updatedAt = nowIso();
+  const session = createSession(state, user.userId, input.activeOrgId || null, { rotate: true });
+  const activeOrg = ensureActiveOrgForUser(state, user, session.activeOrgId);
+  session.activeOrgId = activeOrg.orgId;
+  session.lastSeenAt = nowIso();
+  recordAuditEvent(state, {
+    action: 'auth.email_verified',
+    entityType: 'session',
+    entityId: session.sessionId,
+    orgId: activeOrg.orgId,
+    actorUserId: user.userId,
+    actorHandle: user.handle,
+    summary: `Email verified for ${user.handle}`,
+    metadata: { email: user.email }
+  });
+  await saveState(state);
+  return buildAuthPayload(state, session.sessionId);
 }
 
 export async function loginWithEmail(input) {
   const state = await loadState();
   const email = String(input.email || '').trim().toLowerCase();
+  const password = String(input.password || '');
   if (!email) {
     throw createError(400, 'Email is required');
   }
+  if (!password) {
+    throw createError(400, 'Password is required');
+  }
 
-  const displayName = String(input.displayName || input.handle || email.split('@')[0] || 'Email User').trim();
-  const handle = normalizeHandle(input.handle || displayName || email.split('@')[0]);
-  const user = upsertUser(state, {
-    authMethod: 'email',
-    email,
-    displayName,
-    handle
-  });
-  const session = createOrRefreshSession(state, user.userId, input.activeOrgId || null);
+  const user = state.users.find((item) => item.email && item.email.toLowerCase() === email) || null;
+  if (!user) {
+    throw createError(404, 'Account not found');
+  }
+  if (!user.emailVerifiedAt) {
+    throw createError(403, 'Email address has not been verified');
+  }
+  if (!verifyPassword(password, user.passwordHash || '', user.passwordSalt || '')) {
+    throw createError(401, 'Invalid email or password');
+  }
+
+  const session = createSession(state, user.userId, input.activeOrgId || null, { rotate: true });
   const activeOrg = ensureActiveOrgForUser(state, user, session.activeOrgId);
   session.activeOrgId = activeOrg.orgId;
   session.lastSeenAt = nowIso();
@@ -103,7 +197,7 @@ export async function loginWithWallet(input) {
     displayName,
     handle
   });
-  const session = createOrRefreshSession(state, user.userId, input.activeOrgId || null);
+  const session = createSession(state, user.userId, input.activeOrgId || null);
   const activeOrg = ensureActiveOrgForUser(state, user, session.activeOrgId);
   session.activeOrgId = activeOrg.orgId;
   session.lastSeenAt = nowIso();
@@ -2010,9 +2104,9 @@ function buildAuthPayload(state, sessionId) {
   return getPublicState(state, auth);
 }
 
-function createOrRefreshSession(state, userId, activeOrgId = null) {
+function createSession(state, userId, activeOrgId = null, { rotate = false } = {}) {
   let session = state.sessions.find((item) => item.userId === userId);
-  if (!session) {
+  if (!session || rotate) {
     session = {
       sessionId: `ses_${randomUUID().slice(0, 8)}`,
       userId,
@@ -2021,14 +2115,15 @@ function createOrRefreshSession(state, userId, activeOrgId = null) {
       lastSeenAt: nowIso(),
       csrfToken: createToken('csrf')
     };
+    state.sessions = state.sessions.filter((item) => item.userId !== userId);
     state.sessions.unshift(session);
-  } else {
-    if (activeOrgId) {
-      session.activeOrgId = activeOrgId;
-    }
-    session.lastSeenAt = nowIso();
-    session.csrfToken ||= createToken('csrf');
+    return session;
   }
+  if (activeOrgId) {
+    session.activeOrgId = activeOrgId;
+  }
+  session.lastSeenAt = nowIso();
+  session.csrfToken = createToken('csrf');
   return session;
 }
 
@@ -2206,6 +2301,11 @@ function normalizeUser(user) {
     email: user.email ? String(user.email).trim().toLowerCase() : '',
     walletAddress: user.walletAddress ? String(user.walletAddress).trim().toLowerCase() : '',
     authMethod: user.authMethod || (user.walletAddress ? 'wallet' : 'email'),
+    passwordHash: user.passwordHash || '',
+    passwordSalt: user.passwordSalt || '',
+    emailVerifiedAt: user.emailVerifiedAt || user.email_verified_at || null,
+    emailVerificationToken: user.emailVerificationToken || user.email_verification_token || '',
+    emailVerificationTokenExpiresAt: user.emailVerificationTokenExpiresAt || user.email_verification_token_expires_at || null,
     createdAt: user.createdAt || nowIso(),
     updatedAt: user.updatedAt || undefined
   };
@@ -2272,8 +2372,34 @@ function normalizeSession(session) {
     activeOrgId: session.activeOrgId || session.active_org_id || null,
     createdAt: session.createdAt || nowIso(),
     lastSeenAt: session.lastSeenAt || nowIso(),
-    csrfToken: session.csrfToken || createToken('csrf')
+    csrfToken: session.csrfToken || createToken('csrf'),
+    expiresAt: session.expiresAt || null,
+    rotatedFromSessionId: session.rotatedFromSessionId || null
   };
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex');
+  const derived = scryptSync(password, salt, 64);
+  return {
+    salt,
+    hash: `scrypt$${salt}$${derived.toString('hex')}`
+  };
+}
+
+function verifyPassword(password, storedHash, storedSalt) {
+  if (!storedHash || !storedSalt) {
+    return false;
+  }
+  const parts = String(storedHash).split('$');
+  const salt = parts[1] || storedSalt;
+  const expectedHex = parts[2] || '';
+  const derived = scryptSync(password, salt, 64);
+  const expected = Buffer.from(expectedHex, 'hex');
+  if (expected.length !== derived.length) {
+    return false;
+  }
+  return timingSafeEqual(expected, derived);
 }
 
 function normalizeWalletChallenge(challenge) {

@@ -315,6 +315,16 @@ function bindEvents() {
   const emailLoginForm = document.querySelector('[data-form="email-login"]');
   if (emailLoginForm) {
     emailLoginForm.onsubmit = handleEmailLogin;
+    emailLoginForm.querySelectorAll('[data-form-action]').forEach((button) => {
+      button.onclick = async (event) => {
+        event.preventDefault();
+        if (button.dataset.formAction === 'register') {
+          await handleRegisterAccount(emailLoginForm);
+        } else if (button.dataset.formAction === 'verify') {
+          await handleVerifyEmail(emailLoginForm);
+        }
+      };
+    });
   }
 
   const walletLoginForm = document.querySelector('[data-form="wallet-login"]');
@@ -885,6 +895,7 @@ async function handleEmailLogin(event) {
     method: 'POST',
     body: {
       email: formData.get('email'),
+      password: formData.get('password'),
       displayName: formData.get('displayName'),
       handle: formData.get('handle'),
       activeOrgId: formData.get('activeOrgId')
@@ -896,6 +907,46 @@ async function handleEmailLogin(event) {
     return;
   }
 
+  const payload = await response.json();
+  setAppState(payload);
+  uiState.selectedBountyId = getDefaultBountyId();
+  navigate('account', uiState.selectedBountyId, false);
+  render();
+}
+
+async function handleRegisterAccount(form) {
+  const formData = new FormData(form);
+  const response = await apiJson('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: formData.get('email'),
+      password: formData.get('password'),
+      displayName: formData.get('displayName'),
+      handle: formData.get('handle')
+    }
+  });
+  if (!response.ok) {
+    alert('Registration failed.');
+    return;
+  }
+  const payload = await response.json();
+  alert(`Verification code: ${payload.verificationToken}`);
+}
+
+async function handleVerifyEmail(form) {
+  const formData = new FormData(form);
+  const response = await apiJson('/api/auth/verify-email', {
+    method: 'POST',
+    body: {
+      email: formData.get('email'),
+      token: formData.get('verificationToken'),
+      activeOrgId: formData.get('activeOrgId')
+    }
+  });
+  if (!response.ok) {
+    alert('Verification failed.');
+    return;
+  }
   const payload = await response.json();
   setAppState(payload);
   uiState.selectedBountyId = getDefaultBountyId();

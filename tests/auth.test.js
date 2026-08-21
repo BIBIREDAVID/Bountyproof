@@ -9,11 +9,13 @@ import {
   issueWalletChallenge,
   loginWithEmail,
   loginWithWallet,
+  registerEmailAccount,
   resolveAuthContext,
   resolveDispute,
   releaseBounty,
   refundBounty,
   saveState,
+  verifyEmailAccount,
   switchActiveOrg,
   verifySubmission,
   loadState
@@ -31,12 +33,21 @@ async function expectReject(promise, messagePattern) {
   assert.match(String(caught.message || caught), messagePattern);
 }
 
+async function registerVerifyLogin(email, password, extra = {}) {
+  const registration = await registerEmailAccount({
+    email,
+    password,
+    displayName: extra.displayName,
+    handle: extra.handle
+  });
+  return verifyEmailAccount({ email, token: registration.verificationToken });
+}
+
 async function run() {
   await saveState(seedState);
 
   try {
-    const emailLogin = await loginWithEmail({
-      email: 'ops@okx.local',
+    const emailLogin = await registerVerifyLogin('ops@okx.local', 'Str0ngP@ssw0rd!', {
       displayName: 'OKX Ops',
       handle: '@okx'
     });
@@ -74,8 +85,7 @@ async function run() {
     }, ownerAuth);
     assert.equal(invite.role, 'reviewer');
 
-    const reviewerLogin = await loginWithEmail({
-      email: 'reviewer@okx.local',
+    const reviewerLogin = await registerVerifyLogin('reviewer@okx.local', 'Reviewer@1234', {
       displayName: 'Reviewer'
     });
     const reviewerAuth = resolveAuthContext(await loadState(), reviewerLogin.auth.sessionId);
@@ -88,8 +98,7 @@ async function run() {
     assert.equal(reviewerAfterAccept.activeOrg.orgId, 'org_0001');
     assert.ok(reviewerAfterAccept.availableOrgs.some((org) => org.orgId === 'org_0001'));
 
-    const posterLogin = await loginWithEmail({
-      email: 'lead@bounties.local',
+    const posterLogin = await registerVerifyLogin('lead@bounties.local', 'Lead@1234', {
       displayName: 'Bounty Lead'
     });
     await switchActiveOrg(posterLogin.auth.sessionId, 'org_0001');

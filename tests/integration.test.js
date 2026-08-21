@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Wallet } from 'ethers';
 import { startServer } from '../server.js';
-import { loadState, saveState } from '../src/store.js';
+import { loadState, registerEmailAccount, saveState, verifyEmailAccount } from '../src/store.js';
 import { seedState } from '../src/data.js';
 
 const PORT = Number(process.env.BOUNTYPROOF_TEST_PORT || 3101);
@@ -60,12 +60,30 @@ async function waitForServer() {
 }
 
 async function login(email, { displayName, handle, activeOrgId } = {}) {
+  const registration = await requestJson('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email,
+      password: 'Str0ngP@ssw0rd!',
+      displayName,
+      handle
+    }
+  });
+  assert.equal(registration.status, 201, `Registration failed: ${registration.text}`);
+  const verify = await requestJson('/api/auth/verify-email', {
+    method: 'POST',
+    body: {
+      email,
+      token: registration.json?.verificationToken,
+      activeOrgId
+    }
+  });
+  assert.equal(verify.status, 200, `Verification failed: ${verify.text}`);
   const response = await requestJson('/api/auth/email-login', {
     method: 'POST',
     body: {
       email,
-      displayName,
-      handle,
+      password: 'Str0ngP@ssw0rd!',
       activeOrgId
     }
   });

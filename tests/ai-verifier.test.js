@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createBounty, createSubmission, loadState, loginWithEmail, resolveAuthContext, saveState, verifySubmission } from '../src/store.js';
+import { createBounty, createSubmission, loadState, loginWithEmail, registerEmailAccount, resolveAuthContext, saveState, verifyEmailAccount, verifySubmission } from '../src/store.js';
 import { seedState } from '../src/data.js';
 
 async function run() {
@@ -62,10 +62,16 @@ async function run() {
   });
 
   try {
-    const login = await loginWithEmail({
+    const registration = await registerEmailAccount({
       email: 'ops@okx.local',
+      password: 'Str0ngP@ssw0rd!',
       displayName: 'OKX Ops',
       handle: '@okx'
+    });
+    await verifyEmailAccount({ email: 'ops@okx.local', token: registration.verificationToken });
+    const login = await loginWithEmail({
+      email: 'ops@okx.local',
+      password: 'Str0ngP@ssw0rd!'
     });
     const state = await loadState();
     const auth = resolveAuthContext(state, login.auth.sessionId);

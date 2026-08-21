@@ -22,10 +22,12 @@ import {
   resolveAuthContext,
   resolveDispute,
   issueWalletChallenge,
+  registerEmailAccount,
   releaseBounty,
   overrideBounty,
   refundBounty,
   reviewIncident,
+  verifyEmailAccount,
   switchActiveOrg,
   updateBounty,
   updateMembershipRole,
@@ -41,6 +43,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = __dirname;
 const isMainModule = process.argv[1] ? path.resolve(process.argv[1]) === __filename : false;
+const authRateLimits = new Map();
 
 const mimeTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -118,10 +121,11 @@ function readHeader(req, name) {
 }
 
 function sessionCookie(sessionId) {
+  const secure = String(process.env.NODE_ENV || '').toLowerCase() === 'production' ? '; Secure' : '';
   if (!sessionId) {
-    return 'bp_session=; Max-Age=0; Path=/; SameSite=Lax';
+    return `bp_session=; Max-Age=0; Path=/; SameSite=Strict${secure}`;
   }
-  return `bp_session=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=Lax`;
+  return `bp_session=${encodeURIComponent(sessionId)}; HttpOnly; Path=/; SameSite=Strict${secure}`;
 }
 
 async function getAuthContext(req) {
@@ -144,6 +148,21 @@ function requireCsrf(req, auth) {
   const csrf = readHeader(req, 'x-csrf-token');
   if (!csrf || csrf !== auth.csrfToken) {
     throw Object.assign(new Error('Invalid CSRF token'), { statusCode: 403 });
+  }
+}
+
+function enforceAuthRateLimit(req, route, limit = 5, windowMs = 60_000) {
+  const key = `${route}:${req.socket?.remoteAddress || 'unknown'}`;
+  const now = Date.now();
+  const bucket = authRateLimits.get(key) || { count: 0, resetAt: now + windowMs };
+  if (bucket.resetAt <= now) {
+    bucket.count = 0;
+    bucket.resetAt = now + windowMs;
+  }
+  bucket.count += 1;
+  authRateLimits.set(key, bucket);
+  if (bucket.count > limit) {
+    throw Object.assign(new Error('Too many auth attempts. Please try again later.'), { statusCode: 429 });
   }
 }
 
@@ -333,20 +352,46 @@ export const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && urlPath === '/api/auth/email-login') {
+      enforceAuthRateLimit(req, 'email-login');
       const body = await readJson(req);
       const payload = await loginWithEmail({
         email: body.email || '',
+        password: body.password || '',
         displayName: body.displayName || '',
         handle: body.handle || '',
         activeOrgId: body.activeOrgId || null
       });
-      const cookies = parseCookies(req);
-      const sessionId = payload.auth?.sessionId || cookies.bp_session || null;
-      sendJson(res, 200, payload, { 'Set-Cookie': sessionCookie(sessionId) });
+      sendJson(res, 200, payload, { 'Set-Cookie': sessionCookie(payload.auth?.sessionId || null) });
+      return;
+    }
+
+    if (req.method === 'POST' && urlPath === '/api/auth/register') {
+      enforceAuthRateLimit(req, 'register');
+      const body = await readJson(req);
+      const payload = await registerEmailAccount({
+        email: body.email || '',
+        password: body.password || '',
+        displayName: body.displayName || '',
+        handle: body.handle || ''
+      });
+      sendJson(res, 201, payload);
+      return;
+    }
+
+    if (req.method === 'POST' && urlPath === '/api/auth/verify-email') {
+      enforceAuthRateLimit(req, 'verify-email');
+      const body = await readJson(req);
+      const payload = await verifyEmailAccount({
+        email: body.email || '',
+        token: body.token || '',
+        activeOrgId: body.activeOrgId || null
+      });
+      sendJson(res, 200, payload, { 'Set-Cookie': sessionCookie(payload.auth?.sessionId || null) });
       return;
     }
 
     if (req.method === 'POST' && urlPath === '/api/auth/wallet-challenge') {
+      enforceAuthRateLimit(req, 'wallet-challenge', 8, 60_000);
       const body = await readJson(req);
       const url = new URL(req.url, 'http://localhost');
       const challenge = await issueWalletChallenge({
@@ -360,6 +405,7 @@ export const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && urlPath === '/api/auth/wallet-login') {
+      enforceAuthRateLimit(req, 'wallet-login');
       const body = await readJson(req);
       const payload = await loginWithWallet({
         walletAddress: body.walletAddress || '',
@@ -372,9 +418,7 @@ export const server = createServer(async (req, res) => {
         domain: body.domain || req.headers.host || 'localhost',
         uri: body.uri || `http://${req.headers.host || '127.0.0.1:3000'}`
       });
-      const cookies = parseCookies(req);
-      const sessionId = payload.auth?.sessionId || cookies.bp_session || null;
-      sendJson(res, 200, payload, { 'Set-Cookie': sessionCookie(sessionId) });
+      sendJson(res, 200, payload, { 'Set-Cookie': sessionCookie(payload.auth?.sessionId || null) });
       return;
     }
 

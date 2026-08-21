@@ -18,6 +18,11 @@
       "email": "ops@okx.local",
       "walletAddress": "0xokx000000000001",
       "authMethod": "email",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T08:00:00Z"
     },
     {
@@ -27,6 +32,11 @@
       "email": "lead@bounties.local",
       "walletAddress": "0xokx000000000002",
       "authMethod": "email",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T08:10:00Z"
     },
     {
@@ -36,6 +46,11 @@
       "email": "docs@bounties.local",
       "walletAddress": "0xokx000000000003",
       "authMethod": "email",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T08:20:00Z"
     },
     {
@@ -45,6 +60,11 @@
       "email": "submitter@demo.local",
       "walletAddress": "0xokx000000000004",
       "authMethod": "wallet",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T08:30:00Z"
     },
     {
@@ -54,6 +74,11 @@
       "email": "another@demo.local",
       "walletAddress": "0xokx000000000005",
       "authMethod": "wallet",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T08:40:00Z"
     },
     {
@@ -63,6 +88,11 @@
       "email": "video@demo.local",
       "walletAddress": "0xokx000000000006",
       "authMethod": "wallet",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T08:50:00Z"
     },
     {
@@ -72,6 +102,11 @@
       "email": "writer@demo.local",
       "walletAddress": "0xokx000000000007",
       "authMethod": "wallet",
+      "passwordHash": "",
+      "passwordSalt": "",
+      "emailVerifiedAt": null,
+      "emailVerificationToken": "",
+      "emailVerificationTokenExpiresAt": null,
       "createdAt": "2026-08-01T09:00:00Z"
     }
   ],
@@ -174,7 +209,9 @@
       "activeOrgId": "org_0001",
       "createdAt": "2026-08-10T09:00:00Z",
       "lastSeenAt": "2026-08-10T09:00:00Z",
-      "csrfToken": "csrf_seed_0001"
+      "csrfToken": "csrf_seed_0001",
+      "expiresAt": null,
+      "rotatedFromSessionId": null
     }
   ],
   "bounties": [
